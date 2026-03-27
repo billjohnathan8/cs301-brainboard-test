@@ -39,6 +39,12 @@ python .\tools\brainboard_flatten.py --skip-static-analysis --skip-checkov
 # Brainboard preflight (regen + init + validate in brainboard-import)
 powershell -ExecutionPolicy Bypass -File .\tools\brainboard_preflight_validate.ps1
 
+# Generate decluttered architecture-view import (core view, closest to ~43 nodes)
+python .\tools\brainboard_architecture_view.py
+
+# If Brainboard import of core view fails, regenerate with dependency-compatible mode
+python .\tools\brainboard_architecture_view.py --mode compatible --clean
+
 # Clear repo helper
 python .\tools\prune_repo.py
 
