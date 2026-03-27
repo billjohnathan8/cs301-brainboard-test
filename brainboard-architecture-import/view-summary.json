@@ -1,6 +1,8 @@
 {
-  "generated_at_utc": "2026-03-27T17:40:51Z",
+  "generated_at_utc": "2026-03-27T17:50:03Z",
   "mode": "compatible",
+  "requested_mode": "compatible",
+  "compatibility_fallback_applied": false,
   "source": "C:\\code\\work\\smu-cs301-project\\cs301-brainboard-test\\brainboard-import\\brainboard.tf",
   "output_file": "C:\\code\\work\\smu-cs301-project\\cs301-brainboard-test\\brainboard-architecture-import\\brainboard.tf",
   "resource_count_in_source": 194,
