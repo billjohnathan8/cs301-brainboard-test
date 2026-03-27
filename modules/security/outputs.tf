@@ -74,25 +74,25 @@ output "aml_lambda_role_arn" {
 
 output "terraform_backend_policy_arn" {
   description = "IAM policy ARN for Terraform backend access."
-  value       = var.create_backend_iam_policy ? aws_iam_policy.terraform_backend_access[0].arn : null
+  value       = var.create_backend_iam_policy ? aws_iam_policy.terraform_backend_access[0].arn : ""
 }
 
 output "audit_consumer_lambda_role_arn" {
   description = "Audit consumer Lambda IAM role ARN."
-  value       = var.enable_audit_pipeline ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.audit_consumer_lambda[0].arn) : null
+  value       = var.enable_audit_pipeline ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.audit_consumer_lambda[0].arn) : ""
 }
 
 output "aml_consumer_lambda_role_arn" {
   description = "AML consumer Lambda IAM role ARN."
-  value       = var.enable_aml_pipeline ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.aml_consumer_lambda[0].arn) : null
+  value       = var.enable_aml_pipeline ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.aml_consumer_lambda[0].arn) : ""
 }
 
 output "verification_lambda_role_arn" {
   description = "Verification Lambda IAM role ARN."
-  value       = var.enable_verification_pipeline ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.verification_lambda[0].arn) : null
+  value       = var.enable_verification_pipeline ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.verification_lambda[0].arn) : ""
 }
 
 output "sftp_transaction_collector_role_arn" {
   description = "Transaction ingestion Lambda IAM role ARN."
-  value       = var.enable_sftp_transaction_collector ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.sftp_transaction_collector[0].arn) : null
+  value       = var.enable_sftp_transaction_collector ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.sftp_transaction_collector[0].arn) : ""
 }

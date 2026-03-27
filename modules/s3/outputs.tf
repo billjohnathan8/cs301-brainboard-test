@@ -29,25 +29,25 @@ output "frontend_website_endpoint" {
 
 output "verification_bucket_id" {
   description = "Verification documents bucket ID."
-  value       = var.enable_verification_bucket ? aws_s3_bucket.verification[0].id : null
+  value       = var.enable_verification_bucket ? aws_s3_bucket.verification[0].id : ""
 }
 
 output "verification_bucket_arn" {
   description = "Verification documents bucket ARN."
-  value       = var.enable_verification_bucket ? aws_s3_bucket.verification[0].arn : null
+  value       = var.enable_verification_bucket ? aws_s3_bucket.verification[0].arn : ""
 }
 
 output "transaction_sftp_bucket_name" {
   description = "Transaction ingestion source bucket name (legacy 'sftp' naming)."
-  value       = var.enable_transaction_sftp_bucket ? aws_s3_bucket.transaction_sftp[0].bucket : null
+  value       = var.enable_transaction_sftp_bucket ? aws_s3_bucket.transaction_sftp[0].bucket : ""
 }
 
 output "transaction_sftp_bucket_id" {
   description = "Transaction ingestion source bucket ID (legacy 'sftp' naming)."
-  value       = var.enable_transaction_sftp_bucket ? aws_s3_bucket.transaction_sftp[0].id : null
+  value       = var.enable_transaction_sftp_bucket ? aws_s3_bucket.transaction_sftp[0].id : ""
 }
 
 output "transaction_sftp_bucket_arn" {
   description = "Transaction ingestion source bucket ARN (legacy 'sftp' naming)."
-  value       = var.enable_transaction_sftp_bucket ? aws_s3_bucket.transaction_sftp[0].arn : null
+  value       = var.enable_transaction_sftp_bucket ? aws_s3_bucket.transaction_sftp[0].arn : ""
 }

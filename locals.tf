@@ -79,7 +79,7 @@ locals {
   # Collect DynamoDB table ARNs for AWS Backup (filter out nulls)
   #--------------------------------------------------------------
   dynamodb_backup_arns = compact([
-    module.dynamodb.audit_logs_table_arn != null ? module.dynamodb.audit_logs_table_arn : "",
-    module.dynamodb.aml_reports_table_arn != null ? module.dynamodb.aml_reports_table_arn : "",
+    module.dynamodb.audit_logs_table_arn,
+    module.dynamodb.aml_reports_table_arn,
   ])
 }
