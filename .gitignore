@@ -4,10 +4,13 @@ tf-import/
 # Terraform Files
 # Local .terraform directories
 .terraform/
+**/.terraform/
 
 # .tfstate files
 *.tfstate
 *.tfstate.*
+terraform.tfstate.d/
+**/terraform.tfstate.d/
 
 # Crash log files
 crash.log
@@ -19,11 +22,14 @@ crash.*.log
 # to change depending on the environment.
 *.tfvars
 *.tfvars.json
+*.auto.tfvars
+*.auto.tfvars.json
 # Allow committed environment variable files (non-sensitive values only)
 !platform/terraform/env/*.tfvars
 
 # Ignore backend configuration files (may contain sensitive S3/DynamoDB info)
 backend.hcl
+*.tfbackend
 
 # Ignore override files as they are usually used to override resources locally and so
 # are not checked in
@@ -138,6 +144,15 @@ test-results/
 
 # Local CI-generated Terraform artifact zips
 .ci-artifacts/
+*.zip
+
+# Brainboard import generated artifacts and local state/secrets
+brainboard-import/.generated-lambda-artifacts/
+
+# Keep core Brainboard Terraform files tracked for import/visualization
+!brainboard-import/*.tf
+!brainboard-import/*.tf.json
+!brainboard-import/.terraform.lock.hcl
 
 # Ignore Test Directories
 node_modules/
