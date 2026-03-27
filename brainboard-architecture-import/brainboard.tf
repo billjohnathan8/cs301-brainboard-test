@@ -1286,53 +1286,6 @@ variable "ecs__vpc_id" {
 # Source: modules/ecs/auto_scaling.tf
 
 # Source: modules/ecs/ecs.tf
-resource "aws_ecs_task_definition" "ecs__service" {
-  for_each = local.service_configs
-
-  family                   = "${var.ecs__name_prefix}-${each.key}"
-  requires_compatibilities = ["FARGATE"]
-  network_mode             = "awsvpc"
-  cpu                      = tostring(var.ecs__ecs_task_cpu)
-  memory                   = tostring(var.ecs__ecs_task_memory)
-  execution_role_arn       = var.ecs__ecs_task_execution_role_arn
-  task_role_arn            = var.ecs__ecs_task_role_arns[each.key]
-
-  container_definitions = jsonencode([
-    {
-      name      = each.key
-      image     = "${var.ecs__ecr_repository_urls[each.key]}:${each.value.image_tag}"
-      essential = true
-
-      portMappings = [
-        {
-          containerPort = 8080
-          hostPort      = 8080
-          protocol      = "tcp"
-        }
-      ]
-
-      environment = each.value.environment
-      secrets     = each.value.secrets
-
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.ecs__ecs[each.key].name
-          "awslogs-region"        = var.ecs__aws_region
-          "awslogs-stream-prefix" = "ecs"
-        }
-      }
-
-      healthCheck = {
-        command     = ["CMD-SHELL", "wget -qO- http://localhost:8080${var.ecs__service_health_check_path} || exit 1"]
-        interval    = 30
-        timeout     = 5
-        retries     = 3
-        startPeriod = 30
-      }
-    }
-  ])
-}
 
 # Source: modules/ecs/ecs.tf
 resource "aws_ecs_service" "ecs__service" {
@@ -1406,18 +1359,6 @@ resource "aws_ecs_service" "ecs__service" {
 # Source: modules/ecs/ecs.tf
 
 # Source: modules/ecs/logs.tf
-resource "aws_cloudwatch_log_group" "ecs__ecs" {
-  for_each = local.service_configs
-
-  name              = "/aws/ecs/${var.ecs__name_prefix}/${each.key}"
-  retention_in_days = var.ecs__cloudwatch_log_retention_days
-
-  tags = {
-    Name        = "${var.ecs__name_prefix}-${each.key}-logs"
-    Service     = each.key
-    Environment = var.ecs__environment
-  }
-}
 
 # Source: modules/ecs/main.tf
 locals {
@@ -2015,13 +1956,6 @@ variable "lambda__verification_zip_path" {
 
 # Source: modules/lambda/main.tf
 
-resource "aws_cloudwatch_log_group" "lambda__log_lambda" {
-  count = var.lambda__enable_log_lambda ? 1 : 0
-
-  name              = "/aws/lambda/${var.lambda__name_prefix}-log-service"
-  retention_in_days = var.lambda__cloudwatch_log_retention_days
-}
-
 # Source: modules/lambda/main.tf
 
 resource "aws_lambda_function" "lambda__log" {
@@ -2061,13 +1995,6 @@ resource "aws_lambda_function" "lambda__log" {
 }
 
 # Source: modules/lambda/main.tf
-
-resource "aws_cloudwatch_log_group" "lambda__aml_lambda" {
-  count = var.lambda__enable_aml_lambda ? 1 : 0
-
-  name              = "/aws/lambda/${var.lambda__name_prefix}-aml"
-  retention_in_days = var.lambda__cloudwatch_log_retention_days
-}
 
 # Source: modules/lambda/main.tf
 
@@ -2110,13 +2037,6 @@ resource "aws_lambda_function" "lambda__aml" {
 
 # Source: modules/lambda/main.tf
 
-resource "aws_cloudwatch_log_group" "lambda__sftp_transaction_collector" {
-  count = var.lambda__enable_sftp_transaction_collector ? 1 : 0
-
-  name              = "/aws/lambda/${var.lambda__name_prefix}-sftp-transaction-collector"
-  retention_in_days = var.lambda__cloudwatch_log_retention_days
-}
-
 # Source: modules/lambda/main.tf
 
 resource "aws_lambda_function" "lambda__sftp_transaction_collector" {
@@ -2154,13 +2074,6 @@ resource "aws_lambda_function" "lambda__sftp_transaction_collector" {
 
 # Source: modules/lambda/main.tf
 
-resource "aws_cloudwatch_log_group" "lambda__audit_consumer" {
-  count = var.lambda__enable_audit_consumer ? 1 : 0
-
-  name              = "/aws/lambda/${var.lambda__name_prefix}-audit-consumer"
-  retention_in_days = var.lambda__cloudwatch_log_retention_days
-}
-
 # Source: modules/lambda/main.tf
 
 resource "aws_lambda_function" "lambda__audit_consumer" {
@@ -2188,13 +2101,6 @@ resource "aws_lambda_function" "lambda__audit_consumer" {
 
 # Source: modules/lambda/main.tf
 
-resource "aws_cloudwatch_log_group" "lambda__aml_consumer" {
-  count = var.lambda__enable_aml_consumer ? 1 : 0
-
-  name              = "/aws/lambda/${var.lambda__name_prefix}-aml-consumer"
-  retention_in_days = var.lambda__cloudwatch_log_retention_days
-}
-
 # Source: modules/lambda/main.tf
 
 resource "aws_lambda_function" "lambda__aml_consumer" {
@@ -2221,13 +2127,6 @@ resource "aws_lambda_function" "lambda__aml_consumer" {
 # Source: modules/lambda/main.tf
 
 # Source: modules/lambda/main.tf
-
-resource "aws_cloudwatch_log_group" "lambda__verification" {
-  count = var.lambda__enable_verification_lambda ? 1 : 0
-
-  name              = "/aws/lambda/${var.lambda__name_prefix}-verification"
-  retention_in_days = var.lambda__cloudwatch_log_retention_days
-}
 
 # Source: modules/lambda/main.tf
 
@@ -2323,9 +2222,6 @@ variable "network__vpc_cidr" {
 }
 
 # Source: modules/network/main.tf
-data "aws_availability_zones" "network__available" {
-  state = "available"
-}
 
 # Source: modules/network/main.tf
 locals {
@@ -2418,15 +2314,6 @@ resource "aws_internet_gateway" "network__this" {
 }
 
 # Source: modules/network/vpc.tf
-resource "aws_eip" "network__nat" {
-  count = var.network__enable_nat_gateway ? (var.network__enable_multi_az_nat ? var.network__az_count : 1) : 0
-
-  domain = "vpc"
-
-  tags = {
-    Name = var.network__enable_multi_az_nat ? "${var.network__name_prefix}-nat-eip-${count.index}" : "${var.network__name_prefix}-nat-eip"
-  }
-}
 
 # Source: modules/network/vpc.tf
 resource "aws_nat_gateway" "network__this" {
@@ -2584,8 +2471,6 @@ variable "observability__target_group_arn_suffixes" {
 
 # Source: modules/observability/main.tf
 
-data "aws_caller_identity" "observability__current" {}
-
 # Source: modules/observability/main.tf
 
 locals {
@@ -2606,41 +2491,6 @@ resource "aws_s3_bucket" "observability__cloudtrail" {
 }
 
 # Source: modules/observability/main.tf
-
-resource "aws_s3_bucket_policy" "observability__cloudtrail" {
-  count = var.observability__enable_cloudtrail ? 1 : 0
-
-  bucket = aws_s3_bucket.observability__cloudtrail[0].id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid    = "AWSCloudTrailAclCheck"
-        Effect = "Allow"
-        Principal = {
-          Service = "cloudtrail.amazonaws.com"
-        }
-        Action   = "s3:GetBucketAcl"
-        Resource = aws_s3_bucket.observability__cloudtrail[0].arn
-      },
-      {
-        Sid    = "AWSCloudTrailWrite"
-        Effect = "Allow"
-        Principal = {
-          Service = "cloudtrail.amazonaws.com"
-        }
-        Action   = "s3:PutObject"
-        Resource = "${aws_s3_bucket.observability__cloudtrail[0].arn}/AWSLogs/${data.aws_caller_identity.observability__current.account_id}/*"
-        Condition = {
-          StringEquals = {
-            "s3:x-amz-acl" = "bucket-owner-full-control"
-          }
-        }
-      },
-    ]
-  })
-}
 
 # Source: modules/observability/main.tf
 
@@ -2792,20 +2642,6 @@ variable "rds__project_name" {
 
 # Source: modules/rds/kms.tf
 
-resource "aws_kms_key" "rds__rds" {
-  description             = "Customer-managed KMS key for ${var.rds__name_prefix} RDS encryption"
-  deletion_window_in_days = 10
-  enable_key_rotation     = true
-  rotation_period_in_days = 365
-
-  tags = {
-    Name        = "${var.rds__name_prefix}-rds-key"
-    Environment = var.rds__environment
-    Service     = "rds"
-    ManagedBy   = "terraform"
-  }
-}
-
 # Source: modules/rds/kms.tf
 
 # Source: modules/rds/main.tf
@@ -2826,30 +2662,6 @@ resource "aws_db_subnet_group" "rds__postgres" {
 }
 
 # Source: modules/rds/main.tf
-
-resource "aws_db_parameter_group" "rds__postgres" {
-  name   = "${var.rds__name_prefix}-postgres-params"
-  family = var.rds__db_parameter_group_family
-
-  parameter {
-    name  = "log_connections"
-    value = "1"
-  }
-
-  parameter {
-    name  = "log_disconnections"
-    value = "1"
-  }
-
-  parameter {
-    name  = "log_statement"
-    value = "ddl"
-  }
-
-  tags = {
-    Name = "${var.rds__name_prefix}-postgres-params"
-  }
-}
 
 # Source: modules/rds/main.tf
 
@@ -3131,8 +2943,6 @@ variable "security__vpc_id" {
 }
 
 # Source: modules/security/main.tf
-
-data "aws_caller_identity" "security__current" {}
 
 # Source: modules/security/main.tf
 
