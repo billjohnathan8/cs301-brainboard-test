@@ -195,7 +195,7 @@ def _replace_refs(block_text: str, res_map, data_map, var_map):
 
 
 def _normalize_dynamodb_gsi_key_schema(block_text: str) -> str:
-    """Normalize DynamoDB GSIs to key_schema blocks (AWS provider v6-friendly)."""
+    """Normalize DynamoDB GSIs to hash_key/range_key for Brainboard compatibility."""
     lines = block_text.splitlines()
     out = []
     stack = []
@@ -216,12 +216,14 @@ def _normalize_dynamodb_gsi_key_schema(block_text: str) -> str:
                 "indent": m_open.group(1),
                 "hash_expr": None,
                 "range_expr": None,
-                "hash_schema_seen": False,
-                "range_schema_seen": False,
+                "hash_seen": False,
+                "range_seen": False,
                 "attr_expr": None,
                 "key_type": None,
             }
             stack.append(frame)
+            if frame["name"] == "key_schema" and len(stack) >= 2 and stack[-2]["name"] == "global_secondary_index":
+                continue
             out.append(line)
             continue
 
@@ -231,25 +233,18 @@ def _normalize_dynamodb_gsi_key_schema(block_text: str) -> str:
             if current["name"] == "key_schema" and len(stack) >= 2 and stack[-2]["name"] == "global_secondary_index":
                 parent = stack[-2]
                 if current["key_type"] == "HASH" and current["attr_expr"] is not None:
-                    parent["hash_schema_seen"] = True
+                    parent["hash_expr"] = current["attr_expr"]
                 if current["key_type"] == "RANGE" and current["attr_expr"] is not None:
-                    parent["range_schema_seen"] = True
+                    parent["range_expr"] = current["attr_expr"]
                 stack.pop()
-                out.append(line)
                 continue
 
             if current["name"] == "global_secondary_index":
                 key_indent = current["indent"] + "  "
-                if current["hash_expr"] is not None and not current["hash_schema_seen"]:
-                    out.append(f"{key_indent}key_schema {{")
-                    out.append(f"{key_indent}  attribute_name = {current['hash_expr']}")
-                    out.append(f'{key_indent}  key_type       = "HASH"')
-                    out.append(f"{key_indent}}}")
-                if current["range_expr"] is not None and not current["range_schema_seen"]:
-                    out.append(f"{key_indent}key_schema {{")
-                    out.append(f"{key_indent}  attribute_name = {current['range_expr']}")
-                    out.append(f'{key_indent}  key_type       = "RANGE"')
-                    out.append(f"{key_indent}}}")
+                if current["hash_expr"] is not None and not current["hash_seen"]:
+                    out.append(f"{key_indent}hash_key        = {current['hash_expr']}")
+                if current["range_expr"] is not None and not current["range_seen"]:
+                    out.append(f"{key_indent}range_key       = {current['range_expr']}")
             out.append(line)
             stack.pop()
             continue
@@ -258,10 +253,14 @@ def _normalize_dynamodb_gsi_key_schema(block_text: str) -> str:
             m_hash = hash_re.match(line)
             if m_hash:
                 stack[-1]["hash_expr"] = m_hash.group(1)
+                stack[-1]["hash_seen"] = True
+                out.append(line)
                 continue
             m_range = range_re.match(line)
             if m_range:
                 stack[-1]["range_expr"] = m_range.group(1)
+                stack[-1]["range_seen"] = True
+                out.append(line)
                 continue
 
         if stack and stack[-1]["name"] == "key_schema" and len(stack) >= 2 and stack[-2]["name"] == "global_secondary_index":
@@ -278,28 +277,6 @@ def _normalize_dynamodb_gsi_key_schema(block_text: str) -> str:
         out.append(line)
 
     return "\n".join(out)
-
-
-def _dynamodb_gsi_contains_legacy_keys(block_text: str) -> bool:
-    lines = block_text.splitlines()
-    stack = []
-    block_open_re = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*{\s*$")
-    hash_re = re.compile(r'^\s*hash_key\s*=\s*(.+?)\s*$')
-    range_re = re.compile(r'^\s*range_key\s*=\s*(.+?)\s*$')
-
-    for line in lines:
-        stripped = line.strip()
-        m_open = block_open_re.match(line)
-        if m_open:
-            stack.append(m_open.group(2))
-            continue
-        if stripped == "}" and stack:
-            stack.pop()
-            continue
-        if stack and stack[-1] == "global_secondary_index":
-            if hash_re.match(line) or range_re.match(line):
-                return True
-    return False
 
 
 def _strip_dynamic_block_instances(block_text: str, block_name: str) -> str:
@@ -406,13 +383,8 @@ def _run_brainboard_compatibility_checks(tf_file: Path):
 
     if 'dynamic "default_action"' in text:
         issues.append('Found `dynamic "default_action"`; Brainboard preflight may miss required listener action fields.')
-    for kind, label_1, _label_2, block_text in _collect_blocks(text):
-        if kind == "resource" and label_1 == "aws_dynamodb_table":
-            if _dynamodb_gsi_contains_legacy_keys(block_text):
-                issues.append(
-                    "Found DynamoDB GSI `hash_key`/`range_key`; use `key_schema` blocks for provider v6."
-                )
-                break
+    if "key_schema {" in text:
+        issues.append("Found DynamoDB `key_schema` blocks; Brainboard expects GSI `hash_key`/`range_key`.")
     if re.search(r'(?m)^\s*origin_access_identity\s*=\s*""\s*$', text):
         issues.append("Found empty CloudFront `origin_access_identity`; Brainboard treats it as missing.")
     if re.search(r'(?ms)resource\s+"aws_kms_key"\s+"[^"]+"\s*{.*?enable_key_rotation\s*=\s*true', text) and "rotation_period_in_days" not in text:

@@ -6,13 +6,13 @@
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
-    aws    = { source = "hashicorp/aws", version = "~> 6.0" }
+    aws = { source = "hashicorp/aws", version = "~> 6.0" }
     random = { source = "hashicorp/random", version = "~> 3.0" }
   }
 }
 
 provider "aws" {
-  region                      = "ap-southeast-1"
+  region = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -20,8 +20,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias                       = "us_east_1"
-  region                      = "us-east-1"
+  alias  = "us_east_1"
+  region = "us-east-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -29,8 +29,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias                       = "ap_southeast_1"
-  region                      = "ap-southeast-1"
+  alias  = "ap_southeast_1"
+  region = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -1255,27 +1255,15 @@ resource "aws_dynamodb_table" "dynamodb__audit_logs" {
   global_secondary_index {
     name            = "user-index"
     projection_type = "ALL"
-    key_schema {
-      attribute_name = "user_id"
-      key_type       = "HASH"
-    }
-    key_schema {
-      attribute_name = "sk"
-      key_type       = "RANGE"
-    }
+    hash_key        = "user_id"
+    range_key       = "sk"
   }
 
   global_secondary_index {
     name            = "client-index"
     projection_type = "ALL"
-    key_schema {
-      attribute_name = "client_id"
-      key_type       = "HASH"
-    }
-    key_schema {
-      attribute_name = "sk"
-      key_type       = "RANGE"
-    }
+    hash_key        = "client_id"
+    range_key       = "sk"
   }
 
   point_in_time_recovery {
@@ -1320,14 +1308,8 @@ resource "aws_dynamodb_table" "dynamodb__aml_reports" {
   global_secondary_index {
     name            = "entity-index"
     projection_type = "ALL"
-    key_schema {
-      attribute_name = "entity_id"
-      key_type       = "HASH"
-    }
-    key_schema {
-      attribute_name = "sk"
-      key_type       = "RANGE"
-    }
+    hash_key        = "entity_id"
+    range_key       = "sk"
   }
 
   point_in_time_recovery {

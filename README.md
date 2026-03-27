@@ -15,6 +15,14 @@ python .\tools\brainboard_flatten.py
 - `brainboard-import/`: Generated Terraform for Brainboard import.
 - `tools/`: Utility scripts (`brainboard_flatten.py`, `prune_repo.py`).
 - `build-logs/`: Hidden run logs; script keeps the latest 3 logs only.
+- `.vscode/settings.json`: Workspace editor settings for generated Brainboard Terraform.
+
+**Brainboard vs Terraform AWS Provider (DynamoDB GSI)**
+- Brainboard preflight currently expects legacy `global_secondary_index.hash_key` / `range_key`.
+- Newer AWS provider schemas prefer `key_schema` blocks and may mark legacy keys deprecated in Terraform-aware tooling.
+- This repository intentionally keeps legacy GSI keys in `brainboard-import/brainboard.tf` so Brainboard imports succeed.
+- `tools/brainboard_flatten.py` enforces this conversion during generation.
+- VS Code warning suppression is handled via `.vscode/settings.json` by opening the generated file as `hcl`, so schema deprecation diagnostics do not distract from Brainboard import workflows.
 
 **Useful Commands**
 ```powershell
