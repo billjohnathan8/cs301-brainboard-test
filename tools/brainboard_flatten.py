@@ -602,6 +602,8 @@ def _build_operable_lambda_artifacts(terraform_dir: Path):
 
 
 def _hcl_literal(value):
+    if value is None:
+        return "null"
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)):
