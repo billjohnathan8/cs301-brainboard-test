@@ -236,7 +236,7 @@ def _prepare_build_logger():
     return BuildLogger(log_file)
 
 
-def generate_brainboard_tf() -> Path:
+def generate_brainboard_tf() -> tuple[Path, bool]:
     if not MODULES_DIR.exists():
         raise SystemExit(f"Missing modules dir: {MODULES_DIR}")
 
@@ -304,8 +304,13 @@ def generate_brainboard_tf() -> Path:
             out_lines.append(block_text.rstrip())
             out_lines.append("")
 
-    OUT_FILE.write_text("\n".join(out_lines).rstrip() + "\n", encoding="utf-8")
-    return OUT_FILE
+    new_text = "\n".join(out_lines).rstrip() + "\n"
+    old_text = OUT_FILE.read_text(encoding="utf-8") if OUT_FILE.exists() else None
+
+    if old_text != new_text:
+        OUT_FILE.write_text(new_text, encoding="utf-8")
+        return OUT_FILE, True
+    return OUT_FILE, False
 
 
 def _neutral_aws_env():
@@ -667,8 +672,11 @@ def main():
     _log(f"Build log file: {LOGGER.path}")
 
     try:
-        tf_file = generate_brainboard_tf()
-        _log(f"Wrote {tf_file}")
+        tf_file, changed = generate_brainboard_tf()
+        if changed:
+            _log(f"Generated {tf_file} [CHANGED]")
+        else:
+            _log(f"Generated {tf_file} [UNCHANGED]")
 
         if not args.skip_static_analysis:
             _run_static_analysis(OUT_DIR, tf_file, run_checkov=not args.skip_checkov)

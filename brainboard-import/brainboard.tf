@@ -5,13 +5,13 @@
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
-    aws    = { source = "hashicorp/aws" }
+    aws = { source = "hashicorp/aws" }
     random = { source = "hashicorp/random" }
   }
 }
 
 provider "aws" {
-  region                      = "ap-southeast-1"
+  region = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -19,8 +19,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias                       = "us_east_1"
-  region                      = "us-east-1"
+  alias  = "us_east_1"
+  region = "us-east-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -28,8 +28,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias                       = "ap_southeast_1"
-  region                      = "ap-southeast-1"
+  alias  = "ap_southeast_1"
+  region = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
