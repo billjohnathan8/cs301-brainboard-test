@@ -1255,15 +1255,27 @@ resource "aws_dynamodb_table" "dynamodb__audit_logs" {
   global_secondary_index {
     name            = "user-index"
     projection_type = "ALL"
-    hash_key        = "user_id"
-    range_key       = "sk"
+    key_schema {
+      attribute_name = "user_id"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "sk"
+      key_type       = "RANGE"
+    }
   }
 
   global_secondary_index {
     name            = "client-index"
     projection_type = "ALL"
-    hash_key        = "client_id"
-    range_key       = "sk"
+    key_schema {
+      attribute_name = "client_id"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "sk"
+      key_type       = "RANGE"
+    }
   }
 
   point_in_time_recovery {
@@ -1308,8 +1320,14 @@ resource "aws_dynamodb_table" "dynamodb__aml_reports" {
   global_secondary_index {
     name            = "entity-index"
     projection_type = "ALL"
-    hash_key        = "entity_id"
-    range_key       = "sk"
+    key_schema {
+      attribute_name = "entity_id"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "sk"
+      key_type       = "RANGE"
+    }
   }
 
   point_in_time_recovery {
