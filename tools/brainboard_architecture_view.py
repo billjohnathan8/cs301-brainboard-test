@@ -271,6 +271,80 @@ def _find_unresolved_references(text: str, removed_resources, removed_data):
     return unresolved
 
 
+def _ensure_variable_block(text: str, variable_name: str, block_text: str):
+    if re.search(rf'(?m)^\s*variable\s+"{re.escape(variable_name)}"\s*{{', text):
+        return text
+    return text.rstrip() + "\n\n" + block_text.strip() + "\n"
+
+
+def _apply_brainboard_compatibility_patches(text: str):
+    # Brainboard architecture preflight may not model these dependency resources
+    # as architecture nodes. Route those links via explicit variables so import
+    # does not fail even when helper resources are omitted in the visual graph.
+    replacements = {
+        "task_definition                    = aws_ecs_task_definition.ecs__service[each.key].arn": (
+            'task_definition                    = lookup(var.ecs__task_definition_arns, each.key, "arn:aws:ecs:${var.ecs__aws_region}:000000000000:task-definition/${var.ecs__name_prefix}-${each.key}:1")'
+        ),
+        "allocation_id = aws_eip.network__nat[count.index].id": (
+            'allocation_id = element(concat(var.network__nat_eip_allocation_ids, ["eipalloc-00000000000000000"]), count.index)'
+        ),
+        "kms_key_id                 = aws_kms_key.rds__rds.arn": (
+            "kms_key_id                 = var.rds__kms_key_arn"
+        ),
+        "parameter_group_name       = aws_db_parameter_group.rds__postgres.name": (
+            "parameter_group_name       = var.rds__db_parameter_group_name"
+        ),
+        "performance_insights_kms_key_id       = var.rds__performance_insights_enabled ? aws_kms_key.rds__rds.arn : null": (
+            "performance_insights_kms_key_id       = var.rds__performance_insights_enabled ? var.rds__kms_key_arn : null"
+        ),
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    text = _ensure_variable_block(
+        text,
+        "ecs__task_definition_arns",
+        """
+variable "ecs__task_definition_arns" {
+  type    = any
+  default = {}
+}
+        """,
+    )
+    text = _ensure_variable_block(
+        text,
+        "network__nat_eip_allocation_ids",
+        """
+variable "network__nat_eip_allocation_ids" {
+  type    = any
+  default = []
+}
+        """,
+    )
+    text = _ensure_variable_block(
+        text,
+        "rds__kms_key_arn",
+        """
+variable "rds__kms_key_arn" {
+  type    = any
+  default = "arn:aws:kms:ap-southeast-1:000000000000:key/00000000-0000-0000-0000-000000000000"
+}
+        """,
+    )
+    text = _ensure_variable_block(
+        text,
+        "rds__db_parameter_group_name",
+        """
+variable "rds__db_parameter_group_name" {
+  type    = any
+  default = "default.postgres14"
+}
+        """,
+    )
+    return text
+
+
 def _copy_if_exists(src: Path, dest: Path):
     if src.exists():
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -384,7 +458,9 @@ def main():
                 blocks_to_remove.append(block)
             if block.kind == "data" and key not in selected_data:
                 blocks_to_remove.append(block)
-        return _strip_blocks(source_text, blocks_to_remove)
+        return _apply_brainboard_compatibility_patches(
+            _strip_blocks(source_text, blocks_to_remove)
+        )
 
     output_text = build_output_text(keep_resources, keep_data)
 
