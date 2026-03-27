@@ -769,39 +769,41 @@ resource "aws_cloudfront_distribution" "cloudfront__frontend" {
 
 # Source: modules/cloudfront/main.tf
 
-data "aws_iam_policy_document" "cloudfront__frontend_bucket_policy" {
-  statement {
-    sid    = "AllowCloudFrontRead"
-    effect = "Allow"
-
-    principals {
-      type        = "Service"
-      identifiers = ["cloudfront.amazonaws.com"]
-    }
-
-    actions = ["s3:GetObject"]
-    resources = [
-      "${var.cloudfront__frontend_bucket_arn}/*",
-    ]
-
-    # OAC signs requests so S3 can verify SourceArn. Without OAC (Learner Lab),
-    # CloudFront doesn't sign requests so this condition must be omitted.
-    dynamic "condition" {
-      for_each = var.cloudfront__enable_cloudfront_oac ? [1] : []
-      content {
-        test     = "StringEquals"
-        variable = "AWS:SourceArn"
-        values   = [aws_cloudfront_distribution.cloudfront__frontend.arn]
+locals {
+  frontend_bucket_policy_statement = merge(
+    {
+      Sid    = "AllowCloudFrontRead"
+      Effect = "Allow"
+      Principal = {
+        Service = "cloudfront.amazonaws.com"
       }
-    }
-  }
+      Action = ["s3:GetObject"]
+      Resource = [
+        "${var.cloudfront__frontend_bucket_arn}/*",
+      ]
+    },
+    var.cloudfront__enable_cloudfront_oac ? {
+      # OAC signs requests so S3 can verify SourceArn. Without OAC (Learner Lab),
+      # CloudFront doesn't sign requests so this condition must be omitted.
+      Condition = {
+        StringEquals = {
+          "AWS:SourceArn" = aws_cloudfront_distribution.cloudfront__frontend.arn
+        }
+      }
+    } : {}
+  )
+
+  frontend_bucket_policy_json = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [local.frontend_bucket_policy_statement]
+  })
 }
 
 # Source: modules/cloudfront/main.tf
 
 resource "aws_s3_bucket_policy" "cloudfront__frontend" {
   bucket = var.cloudfront__frontend_bucket_id
-  policy = data.aws_iam_policy_document.cloudfront__frontend_bucket_policy.json
+  policy = local.frontend_bucket_policy_json
 }
 
 # Source: modules/cloudfront/route53.tf
