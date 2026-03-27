@@ -16,20 +16,41 @@ resource "aws_ecs_task_definition" "service" {
   execution_role_arn       = var.ecs_task_execution_role_arn
   task_role_arn            = var.ecs_task_role_arns[each.key]
 
-  container_definitions = templatefile(local.task_definition_template, {
-    container_name    = each.key
-    image             = "${var.ecr_repository_urls[each.key]}:${each.value.image_tag}"
-    container_port    = 8080
-    environment_json  = jsonencode(each.value.environment)
-    secrets_json      = jsonencode(each.value.secrets)
-    log_group_name    = aws_cloudwatch_log_group.ecs[each.key].name
-    aws_region        = var.aws_region
-    healthcheck_cmd   = "wget -qO- http://localhost:8080${var.service_health_check_path} || exit 1"
-    health_interval   = 30
-    health_timeout    = 5
-    health_retries    = 3
-    health_start_time = 30
-  })
+  container_definitions = jsonencode([
+    {
+      name      = each.key
+      image     = "${var.ecr_repository_urls[each.key]}:${each.value.image_tag}"
+      essential = true
+
+      portMappings = [
+        {
+          containerPort = 8080
+          hostPort      = 8080
+          protocol      = "tcp"
+        }
+      ]
+
+      environment = each.value.environment
+      secrets     = each.value.secrets
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.ecs[each.key].name
+          "awslogs-region"        = var.aws_region
+          "awslogs-stream-prefix" = "ecs"
+        }
+      }
+
+      healthCheck = {
+        command     = ["CMD-SHELL", "wget -qO- http://localhost:8080${var.service_health_check_path} || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 30
+      }
+    }
+  ])
 }
 
 # ECS Services - manage running tasks and integrate with ALB
