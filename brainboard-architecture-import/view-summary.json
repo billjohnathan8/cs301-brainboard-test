@@ -1,0 +1,76 @@
+{
+  "generated_at_utc": "2026-03-27T17:31:35Z",
+  "mode": "core",
+  "source": "C:\\code\\work\\smu-cs301-project\\cs301-brainboard-test\\brainboard-import\\brainboard.tf",
+  "output_file": "C:\\code\\work\\smu-cs301-project\\cs301-brainboard-test\\brainboard-architecture-import\\brainboard.tf",
+  "resource_count_in_source": 194,
+  "data_count_in_source": 20,
+  "resource_count_kept": 43,
+  "data_count_kept": 0,
+  "estimated_brainboard_nodes": 43,
+  "resource_count_removed": 151,
+  "data_count_removed": 20,
+  "copied_artifacts": [
+    ".terraform.lock.hcl",
+    ".generated-lambda-artifacts/"
+  ],
+  "unresolved_reference_count": 15,
+  "unresolved_reference_entries": [
+    {
+      "count": 2,
+      "address": "aws_kms_key.rds__rds"
+    },
+    {
+      "count": 1,
+      "address": "data.aws_caller_identity.security__current"
+    },
+    {
+      "count": 1,
+      "address": "data.aws_caller_identity.observability__current"
+    },
+    {
+      "count": 1,
+      "address": "data.aws_availability_zones.network__available"
+    },
+    {
+      "count": 1,
+      "address": "aws_s3_bucket_policy.observability__cloudtrail"
+    },
+    {
+      "count": 1,
+      "address": "aws_eip.network__nat"
+    },
+    {
+      "count": 1,
+      "address": "aws_ecs_task_definition.ecs__service"
+    },
+    {
+      "count": 1,
+      "address": "aws_db_parameter_group.rds__postgres"
+    },
+    {
+      "count": 1,
+      "address": "aws_cloudwatch_log_group.lambda__verification"
+    },
+    {
+      "count": 1,
+      "address": "aws_cloudwatch_log_group.lambda__sftp_transaction_collector"
+    },
+    {
+      "count": 1,
+      "address": "aws_cloudwatch_log_group.lambda__log_lambda"
+    },
+    {
+      "count": 1,
+      "address": "aws_cloudwatch_log_group.lambda__audit_consumer"
+    },
+    {
+      "count": 1,
+      "address": "aws_cloudwatch_log_group.lambda__aml_lambda"
+    },
+    {
+      "count": 1,
+      "address": "aws_cloudwatch_log_group.lambda__aml_consumer"
+    }
+  ]
+}
