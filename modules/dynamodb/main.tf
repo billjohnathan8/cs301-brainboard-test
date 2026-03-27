@@ -35,16 +35,16 @@ resource "aws_dynamodb_table" "audit_logs" {
 
   global_secondary_index {
     name            = "user-index"
+    projection_type = "ALL"
     hash_key        = "user_id"
     range_key       = "sk"
-    projection_type = "ALL"
   }
 
   global_secondary_index {
     name            = "client-index"
+    projection_type = "ALL"
     hash_key        = "client_id"
     range_key       = "sk"
-    projection_type = "ALL"
   }
 
   point_in_time_recovery {
@@ -88,9 +88,9 @@ resource "aws_dynamodb_table" "aml_reports" {
 
   global_secondary_index {
     name            = "entity-index"
+    projection_type = "ALL"
     hash_key        = "entity_id"
     range_key       = "sk"
-    projection_type = "ALL"
   }
 
   point_in_time_recovery {
