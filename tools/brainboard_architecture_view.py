@@ -315,10 +315,11 @@ def main():
     parser.add_argument(
         "--mode",
         choices=["core", "compatible"],
-        default="core",
+        default="compatible",
         help=(
-            "core: keep only architecture-level types (closest to ~43-node view). "
-            "compatible: also keep transitive dependencies for fewer unresolved refs."
+            "compatible: keep transitive dependencies to avoid unresolved references "
+            "(recommended default). "
+            "core: keep only architecture-level types (closest to ~43-node view)."
         ),
     )
     parser.add_argument(
