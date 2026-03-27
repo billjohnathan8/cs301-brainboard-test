@@ -3,8 +3,6 @@
 2. run the flatten command
 3. fix issues (if it exists)
 
-
-
 **Unique Directories:**
 - brainboard-import/
 - tools/
