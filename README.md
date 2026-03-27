@@ -42,8 +42,12 @@ powershell -ExecutionPolicy Bypass -File .\tools\brainboard_preflight_validate.p
 # Generate decluttered architecture-view import (dependency-compatible default; avoids dangling refs)
 python .\tools\brainboard_architecture_view.py
 
-# Generate minimal core architecture-view import (closest to ~43 nodes)
+# Request minimal core architecture-view import.
+# If dangling refs are detected, generator auto-falls back to dependency-compatible output.
 python .\tools\brainboard_architecture_view.py --mode core --clean
+
+# Keep strict minimal core output even if unresolved refs remain (may fail tofu validate)
+python .\tools\brainboard_architecture_view.py --mode core --allow-unresolved --clean
 
 # Clear repo helper
 python .\tools\prune_repo.py

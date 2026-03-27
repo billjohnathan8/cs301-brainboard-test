@@ -331,6 +331,15 @@ def main():
         ),
     )
     parser.add_argument(
+        "--allow-unresolved",
+        action="store_true",
+        help=(
+            "Keep unresolved references in output (legacy core-mode behavior). "
+            "By default, core mode auto-falls back to dependency-compatible output "
+            "when unresolved references are detected."
+        ),
+    )
+    parser.add_argument(
         "--clean",
         action="store_true",
         help="Delete --out-dir before writing fresh outputs.",
@@ -365,17 +374,19 @@ def main():
         mode=args.mode,
         include_core_data=args.include_core_data,
     )
+    effective_mode = args.mode
 
-    blocks_to_remove = []
-    for block in blocks:
-        key = (block.type_name, block.name)
-        if block.kind == "resource" and key not in keep_resources:
-            blocks_to_remove.append(block)
-        if block.kind == "data" and key not in keep_data:
-            blocks_to_remove.append(block)
+    def build_output_text(selected_resources, selected_data):
+        blocks_to_remove = []
+        for block in blocks:
+            key = (block.type_name, block.name)
+            if block.kind == "resource" and key not in selected_resources:
+                blocks_to_remove.append(block)
+            if block.kind == "data" and key not in selected_data:
+                blocks_to_remove.append(block)
+        return _strip_blocks(source_text, blocks_to_remove)
 
-    output_text = _strip_blocks(source_text, blocks_to_remove)
-    out_tf.write_text(output_text, encoding="utf-8")
+    output_text = build_output_text(keep_resources, keep_data)
 
     copied_files = []
     if not args.skip_copy_artifacts:
@@ -393,10 +404,29 @@ def main():
     removed_resources = set(resource_blocks.keys()) - keep_resources
     removed_data = set(data_blocks.keys()) - keep_data
     unresolved = _find_unresolved_references(output_text, removed_resources, removed_data)
+    compatibility_fallback_applied = False
+
+    if unresolved and args.mode == "core" and not args.allow_unresolved:
+        keep_resources, keep_data = _build_keep_sets(
+            resource_blocks,
+            data_blocks,
+            mode="compatible",
+            include_core_data=args.include_core_data,
+        )
+        output_text = build_output_text(keep_resources, keep_data)
+        removed_resources = set(resource_blocks.keys()) - keep_resources
+        removed_data = set(data_blocks.keys()) - keep_data
+        unresolved = _find_unresolved_references(output_text, removed_resources, removed_data)
+        effective_mode = "compatible"
+        compatibility_fallback_applied = True
+
+    out_tf.write_text(output_text, encoding="utf-8")
 
     summary = {
         "generated_at_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "mode": args.mode,
+        "mode": effective_mode,
+        "requested_mode": args.mode,
+        "compatibility_fallback_applied": compatibility_fallback_applied,
         "source": str(source),
         "output_file": str(out_tf),
         "resource_count_in_source": len(resource_blocks),
@@ -421,6 +451,11 @@ def main():
         f"data={summary['data_count_kept']} "
         f"estimated_nodes={summary['estimated_brainboard_nodes']}"
     )
+    if compatibility_fallback_applied:
+        print(
+            "Core mode produced unresolved references; "
+            "auto-switched to dependency-compatible output."
+        )
     if unresolved:
         print(
             f"Warning: unresolved references remain in {args.mode} view."
