@@ -29,6 +29,7 @@ KEEP_NAMES = {
     ".gitignore",
     "README.md",
     "NOTES.md",
+    "brainboard-export"
 }
 
 

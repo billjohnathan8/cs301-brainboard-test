@@ -1,5 +1,6 @@
 # Brainboard export
 tf-import/
+brainboard-export/
 
 # Terraform Files
 # Local .terraform directories
