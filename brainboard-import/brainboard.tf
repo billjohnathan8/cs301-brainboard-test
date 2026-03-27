@@ -1,12 +1,13 @@
 # Auto-generated Brainboard import file
 # Source: modules/*
 # Purpose: visualize resources (not intended for Terraform apply)
+# Note: known Brainboard-unsupported resources are omitted.
 
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
-    aws    = { source = "hashicorp/aws" }
-    random = { source = "hashicorp/random" }
+    aws    = { source = "hashicorp/aws", version = "~> 6.0" }
+    random = { source = "hashicorp/random", version = "~> 3.0" }
   }
 }
 
@@ -1402,16 +1403,28 @@ resource "aws_dynamodb_table" "dynamodb__audit_logs" {
 
   global_secondary_index {
     name            = "user-index"
-    hash_key        = "user_id"
-    range_key       = "sk"
     projection_type = "ALL"
+    key_schema {
+      attribute_name = "user_id"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "sk"
+      key_type       = "RANGE"
+    }
   }
 
   global_secondary_index {
     name            = "client-index"
-    hash_key        = "client_id"
-    range_key       = "sk"
     projection_type = "ALL"
+    key_schema {
+      attribute_name = "client_id"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "sk"
+      key_type       = "RANGE"
+    }
   }
 
   point_in_time_recovery {
@@ -1455,9 +1468,15 @@ resource "aws_dynamodb_table" "dynamodb__aml_reports" {
 
   global_secondary_index {
     name            = "entity-index"
-    hash_key        = "entity_id"
-    range_key       = "sk"
     projection_type = "ALL"
+    key_schema {
+      attribute_name = "entity_id"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "sk"
+      key_type       = "RANGE"
+    }
   }
 
   point_in_time_recovery {
@@ -5334,33 +5353,9 @@ resource "aws_iam_policy" "security__terraform_backend_access" {
 
 # Source: modules/security/secrets.tf
 locals {
-  jwt_hmac_secret_value     = var.security__jwt_hmac_secret != "" ? var.security__jwt_hmac_secret : random_password.security__jwt_hmac_secret.result
-  root_admin_password_value = var.security__root_admin_password != "" ? var.security__root_admin_password : random_password.security__root_admin_password.result
-  db_password_value         = random_password.security__db_password.result
-}
-
-# Source: modules/security/secrets.tf
-
-resource "random_password" "security__jwt_hmac_secret" {
-  length           = 48
-  special          = true
-  override_special = "!@#$%*-_=+?"
-}
-
-# Source: modules/security/secrets.tf
-
-resource "random_password" "security__root_admin_password" {
-  length           = 20
-  special          = true
-  override_special = "!@#$%*-_=+?"
-}
-
-# Source: modules/security/secrets.tf
-
-resource "random_password" "security__db_password" {
-  length           = 24
-  special          = true
-  override_special = "!#$%*-_=+?" # @ is not allowed in RDS master passwords
+  jwt_hmac_secret_value     = var.security__jwt_hmac_secret != "" ? var.security__jwt_hmac_secret : "brainboard-placeholder"
+  root_admin_password_value = var.security__root_admin_password != "" ? var.security__root_admin_password : "brainboard-placeholder"
+  db_password_value         = "brainboard-placeholder"
 }
 
 # Source: modules/security/secrets.tf
@@ -5731,69 +5726,4 @@ variable "waf__enable_waf" {
 variable "waf__name_prefix" {
   type    = any
   default = null
-}
-
-# Source: modules/waf/main.tf
-
-resource "aws_wafv2_web_acl" "waf__frontend" {
-  provider = aws.us_east_1
-  count    = var.waf__enable_waf ? 1 : 0
-
-  name        = "${var.waf__name_prefix}-cloudfront-waf"
-  description = "WAF for CloudFront distribution."
-  scope       = "CLOUDFRONT"
-
-  default_action {
-    allow {}
-  }
-
-  rule {
-    name     = "AWSManagedRulesCommonRuleSet"
-    priority = 1
-
-    override_action {
-      none {}
-    }
-
-    statement {
-      managed_rule_group_statement {
-        name        = "AWSManagedRulesCommonRuleSet"
-        vendor_name = "AWS"
-      }
-    }
-
-    visibility_config {
-      cloudwatch_metrics_enabled = true
-      metric_name                = "${var.waf__name_prefix}-common-rules"
-      sampled_requests_enabled   = true
-    }
-  }
-
-  rule {
-    name     = "AWSManagedRulesSQLiRuleSet"
-    priority = 2
-
-    override_action {
-      none {}
-    }
-
-    statement {
-      managed_rule_group_statement {
-        name        = "AWSManagedRulesSQLiRuleSet"
-        vendor_name = "AWS"
-      }
-    }
-
-    visibility_config {
-      cloudwatch_metrics_enabled = true
-      metric_name                = "${var.waf__name_prefix}-sqli-rules"
-      sampled_requests_enabled   = true
-    }
-  }
-
-  visibility_config {
-    cloudwatch_metrics_enabled = true
-    metric_name                = "${var.waf__name_prefix}-waf"
-    sampled_requests_enabled   = true
-  }
 }
