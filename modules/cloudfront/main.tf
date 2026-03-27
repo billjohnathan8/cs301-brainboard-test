@@ -141,35 +141,37 @@ resource "aws_cloudfront_distribution" "frontend" {
   }
 }
 
-data "aws_iam_policy_document" "frontend_bucket_policy" {
-  statement {
-    sid    = "AllowCloudFrontRead"
-    effect = "Allow"
-
-    principals {
-      type        = "Service"
-      identifiers = ["cloudfront.amazonaws.com"]
-    }
-
-    actions = ["s3:GetObject"]
-    resources = [
-      "${var.frontend_bucket_arn}/*",
-    ]
-
-    # OAC signs requests so S3 can verify SourceArn. Without OAC (Learner Lab),
-    # CloudFront doesn't sign requests so this condition must be omitted.
-    dynamic "condition" {
-      for_each = var.enable_cloudfront_oac ? [1] : []
-      content {
-        test     = "StringEquals"
-        variable = "AWS:SourceArn"
-        values   = [aws_cloudfront_distribution.frontend.arn]
+locals {
+  frontend_bucket_policy_statement = merge(
+    {
+      Sid    = "AllowCloudFrontRead"
+      Effect = "Allow"
+      Principal = {
+        Service = "cloudfront.amazonaws.com"
       }
-    }
-  }
+      Action = ["s3:GetObject"]
+      Resource = [
+        "${var.frontend_bucket_arn}/*",
+      ]
+    },
+    var.enable_cloudfront_oac ? {
+      # OAC signs requests so S3 can verify SourceArn. Without OAC (Learner Lab),
+      # CloudFront doesn't sign requests so this condition must be omitted.
+      Condition = {
+        StringEquals = {
+          "AWS:SourceArn" = aws_cloudfront_distribution.frontend.arn
+        }
+      }
+    } : {}
+  )
+
+  frontend_bucket_policy_json = jsonencode({
+    Version   = "2012-10-17"
+    Statement = [local.frontend_bucket_policy_statement]
+  })
 }
 
 resource "aws_s3_bucket_policy" "frontend" {
   bucket = var.frontend_bucket_id
-  policy = data.aws_iam_policy_document.frontend_bucket_policy.json
+  policy = local.frontend_bucket_policy_json
 }
