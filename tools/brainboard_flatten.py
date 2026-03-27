@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MODULES_DIR = ROOT / "modules"
 OUT_DIR = ROOT / "brainboard-import"
 OUT_FILE = OUT_DIR / "brainboard.tf"
+ENV_DIR = ROOT / "env"
+PROD_TFVARS = ENV_DIR / "prod.tfvars"
 
 BLOCK_START_RE = re.compile(
     r'(?m)^\s*(resource|data|locals)\b(?:\s+"([^"]+)")?(?:\s+"([^"]+)")?\s*{'
@@ -262,11 +264,144 @@ def _append_module_var_stubs(out_lines, module_name: str, var_map: dict):
 
     out_lines.append(f"# Variables for module {module_name}")
     for var_name in sorted(var_map):
+        default_value = _resolve_module_var_default(var_name)
         out_lines.append(f'variable "{var_map[var_name]}" {{')
         out_lines.append("  type    = any")
-        out_lines.append("  default = null")
+        out_lines.append(f"  default = {_hcl_literal(default_value)}")
         out_lines.append("}")
         out_lines.append("")
+
+
+PROFILE_VAR_VALUES = {}
+
+
+def _resolve_module_var_default(var_name: str):
+    if var_name in PROFILE_VAR_VALUES:
+        return PROFILE_VAR_VALUES[var_name]
+    if var_name == "name_prefix":
+        return PROFILE_VAR_VALUES.get("name_prefix", "brainboard-prod")
+    if var_name == "project_name":
+        return PROFILE_VAR_VALUES.get("project_name", "scroogebank-crm")
+    if var_name == "environment":
+        return PROFILE_VAR_VALUES.get("environment", "prod")
+    if var_name == "aws_region":
+        return PROFILE_VAR_VALUES.get("aws_region", "ap-southeast-1")
+    if var_name in {"lab_role_arn", "lab_role_name"}:
+        return ""
+    return None
+
+
+def _strip_inline_comment(value: str) -> str:
+    in_str = False
+    escaped = False
+    for idx, ch in enumerate(value):
+        if in_str:
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\":
+                escaped = True
+                continue
+            if ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+            continue
+        if ch == "#":
+            return value[:idx].rstrip()
+    return value.strip()
+
+
+def _parse_tfvars_scalar(raw: str):
+    text = raw.strip()
+    if text == "":
+        return ""
+    if text.startswith('"') and text.endswith('"'):
+        try:
+            return json.loads(text)
+        except Exception:
+            return text.strip('"')
+    low = text.lower()
+    if low == "true":
+        return True
+    if low == "false":
+        return False
+    if re.match(r"^-?\d+$", text):
+        return int(text)
+    if re.match(r"^-?\d+\.\d+$", text):
+        return float(text)
+    return text
+
+
+def _load_simple_tfvars(tfvars_path: Path) -> dict:
+    values = {}
+    if not tfvars_path.exists():
+        return values
+
+    for raw_line in tfvars_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            continue
+        key, raw_value = line.split("=", 1)
+        key = key.strip()
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
+            continue
+        raw_value = _strip_inline_comment(raw_value)
+        values[key] = _parse_tfvars_scalar(raw_value)
+    return values
+
+
+def _build_prod_profile_values() -> dict:
+    values = _load_simple_tfvars(PROD_TFVARS)
+
+    project_name = str(values.get("project_name", "scroogebank-crm")).strip() or "scroogebank-crm"
+    environment = str(values.get("environment", "prod")).strip() or "prod"
+    aws_region = str(values.get("aws_region", "ap-southeast-1")).strip() or "ap-southeast-1"
+    name_prefix = f"{project_name}-{environment}".replace("_", "-").lower()
+
+    values["project_name"] = project_name
+    values["environment"] = environment
+    values["aws_region"] = aws_region
+    values["name_prefix"] = name_prefix
+    values.setdefault("lab_role_arn", "")
+    values.setdefault("lab_role_name", "")
+    return values
+
+
+def _profile_bool(name: str, default: bool = False) -> bool:
+    value = PROFILE_VAR_VALUES.get(name, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() == "true"
+    return bool(value)
+
+
+def _profile_non_empty(name: str) -> bool:
+    value = PROFILE_VAR_VALUES.get(name, "")
+    if value is None:
+        return False
+    return str(value).strip() != ""
+
+
+def _is_module_enabled(module_name: str) -> bool:
+    if not PROFILE_VAR_VALUES:
+        return True
+
+    if module_name == "acm":
+        # Root module gate: module.acm count depends on both app_domain_name and create_acm_certificates.
+        return _profile_non_empty("app_domain_name") and _profile_bool("create_acm_certificates")
+    if module_name == "apigateway":
+        return _profile_bool("enable_log_lambda")
+    if module_name == "cloudfront":
+        return _profile_bool("enable_cloudfront", default=True)
+    if module_name == "cognito":
+        return _profile_bool("enable_cognito", default=True)
+
+    return True
 
 
 def _append_aws_provider(out_lines, region: str, alias: str | None = None):
@@ -329,7 +464,8 @@ def generate_brainboard_tf() -> tuple[Path, bool]:
     out_lines.append("}")
     out_lines.append("")
 
-    _append_aws_provider(out_lines, "ap-southeast-1")
+    primary_region = str(PROFILE_VAR_VALUES.get("aws_region", "ap-southeast-1"))
+    _append_aws_provider(out_lines, primary_region)
     _append_aws_provider(out_lines, "us-east-1", alias="us_east_1")
     _append_aws_provider(out_lines, "ap-southeast-1", alias="ap_southeast_1")
 
@@ -337,6 +473,9 @@ def generate_brainboard_tf() -> tuple[Path, bool]:
         if not module_dir.is_dir():
             continue
         module_name = module_dir.name
+        if not _is_module_enabled(module_name):
+            _log(f"Skipping module '{module_name}' for prod profile.")
+            continue
 
         res_map = {}
         data_map = {}
@@ -742,6 +881,12 @@ def main():
         action="store_true",
         help="Skip Checkov install + scan.",
     )
+    parser.add_argument(
+        "--profile",
+        choices=["prod", "generic"],
+        default="prod",
+        help="Generation profile. 'prod' uses env/prod.tfvars defaults and root-style module gating.",
+    )
     args = parser.parse_args()
 
     LOGGER = _prepare_build_logger()
@@ -750,6 +895,9 @@ def main():
     _log(f"Build log file: {LOGGER.path}")
 
     try:
+        global PROFILE_VAR_VALUES
+        PROFILE_VAR_VALUES = _build_prod_profile_values() if args.profile == "prod" else {}
+
         tf_file, changed = generate_brainboard_tf()
         if changed:
             _log(f"Generated {tf_file} [CHANGED]")
