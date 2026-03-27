@@ -6,13 +6,13 @@
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
-    aws    = { source = "hashicorp/aws", version = "~> 6.0" }
+    aws = { source = "hashicorp/aws", version = "~> 6.0" }
     random = { source = "hashicorp/random", version = "~> 3.0" }
   }
 }
 
 provider "aws" {
-  region                      = "ap-southeast-1"
+  region = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -20,8 +20,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias                       = "us_east_1"
-  region                      = "us-east-1"
+  alias  = "us_east_1"
+  region = "us-east-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -29,146 +29,12 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias                       = "ap_southeast_1"
-  region                      = "ap-southeast-1"
+  alias  = "ap_southeast_1"
+  region = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
   skip_metadata_api_check     = true
-}
-
-# ---- Module: acm ----
-# Variables for module acm
-variable "acm__alb_origin_subdomain" {
-  type    = any
-  default = null
-}
-
-variable "acm__app_domain_name" {
-  type    = any
-  default = null
-}
-
-variable "acm__manage_dns_validation_records" {
-  type    = any
-  default = null
-}
-
-variable "acm__name_prefix" {
-  type    = any
-  default = null
-}
-
-variable "acm__route53_zone_id" {
-  type    = any
-  default = null
-}
-
-variable "acm__wait_for_validation" {
-  type    = any
-  default = null
-}
-
-# Source: modules/acm/main.tf
-resource "aws_acm_certificate" "acm__us_cert" {
-  provider          = aws.us_east_1
-  domain_name       = "*.${var.acm__app_domain_name}"
-  validation_method = "DNS"
-
-  lifecycle {
-    create_before_destroy = true
-  }
-
-  tags = {
-    Name = "${var.acm__name_prefix}-cloudfront-certificate"
-  }
-}
-
-# Source: modules/acm/main.tf
-resource "aws_acm_certificate" "acm__ap_cert" {
-  provider                  = aws.ap_southeast_1
-  domain_name               = var.acm__app_domain_name
-  subject_alternative_names = ["*.${var.acm__app_domain_name}", "${var.acm__alb_origin_subdomain}.${var.acm__app_domain_name}"]
-  validation_method         = "DNS"
-
-  lifecycle {
-    create_before_destroy = true
-  }
-
-  tags = {
-    Name = "${var.acm__name_prefix}-ap-certificate"
-  }
-}
-
-# Source: modules/acm/main.tf
-locals {
-  us_validation_record_names = [
-    for dvo in aws_acm_certificate.acm__us_cert.domain_validation_options : dvo.resource_record_name
-  ]
-
-  ap_validation_record_names = [
-    for dvo in aws_acm_certificate.acm__ap_cert.domain_validation_options : dvo.resource_record_name
-  ]
-}
-
-# Source: modules/acm/main.tf
-
-resource "aws_acm_certificate_validation" "acm__us_cert_validation" {
-  count = var.acm__wait_for_validation ? 1 : 0
-
-  provider                = aws.us_east_1
-  certificate_arn         = aws_acm_certificate.acm__us_cert.arn
-  validation_record_fqdns = local.us_validation_record_names
-
-  depends_on = [aws_route53_record.acm__us_cert_validation]
-}
-
-# Source: modules/acm/main.tf
-
-resource "aws_acm_certificate_validation" "acm__ap_cert_validation" {
-  count = var.acm__wait_for_validation ? 1 : 0
-
-  provider                = aws.ap_southeast_1
-  certificate_arn         = aws_acm_certificate.acm__ap_cert.arn
-  validation_record_fqdns = local.ap_validation_record_names
-
-  depends_on = [aws_route53_record.acm__ap_cert_validation]
-}
-
-# Source: modules/acm/route53.tf
-resource "aws_route53_record" "acm__us_cert_validation" {
-  for_each = var.acm__manage_dns_validation_records ? {
-    for dvo in aws_acm_certificate.acm__us_cert.domain_validation_options : dvo.domain_name => {
-      name   = dvo.resource_record_name
-      record = dvo.resource_record_value
-      type   = dvo.resource_record_type
-    }
-  } : {}
-
-  allow_overwrite = true
-  name            = each.value.name
-  records         = [each.value.record]
-  ttl             = 60
-  type            = each.value.type
-  zone_id         = var.acm__route53_zone_id
-}
-
-# Source: modules/acm/route53.tf
-resource "aws_route53_record" "acm__ap_cert_validation" {
-  for_each = var.acm__manage_dns_validation_records ? {
-    for dvo in aws_acm_certificate.acm__ap_cert.domain_validation_options : dvo.domain_name => {
-      name   = dvo.resource_record_name
-      record = dvo.resource_record_value
-      type   = dvo.resource_record_type
-    }
-  } : {}
-
-  allow_overwrite = true
-  name            = each.value.name
-  records         = [each.value.record]
-  ttl             = 60
-  type            = each.value.type
-  zone_id         = var.acm__route53_zone_id
 }
 
 # ---- Module: alb ----
@@ -200,7 +66,7 @@ variable "alb__manage_route53_record" {
 
 variable "alb__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 variable "alb__public_subnet_ids" {
@@ -426,12 +292,12 @@ variable "apigateway__app_domain_name" {
 
 variable "apigateway__cloudwatch_log_retention_days" {
   type    = any
-  default = null
+  default = 30
 }
 
 variable "apigateway__environment" {
   type    = any
-  default = null
+  default = "prod"
 }
 
 variable "apigateway__log_lambda_function_name" {
@@ -446,12 +312,12 @@ variable "apigateway__log_lambda_invoke_arn" {
 
 variable "apigateway__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 variable "apigateway__project_name" {
   type    = any
-  default = null
+  default = "scroogebank-crm"
 }
 
 variable "apigateway__use_custom_domain" {
@@ -569,7 +435,7 @@ resource "aws_ssm_parameter" "apigateway__log_service_url" {
 # Variables for module backup
 variable "backup__backup_retention_days" {
   type    = any
-  default = null
+  default = 30
 }
 
 variable "backup__backup_schedule" {
@@ -584,12 +450,12 @@ variable "backup__dynamodb_table_arns" {
 
 variable "backup__enable_backup" {
   type    = any
-  default = null
+  default = true
 }
 
 variable "backup__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 variable "backup__rds_instance_arn" {
@@ -711,12 +577,12 @@ variable "cloudfront__app_domain_name" {
 
 variable "cloudfront__cloudfront_price_class" {
   type    = any
-  default = null
+  default = "PriceClass_100"
 }
 
 variable "cloudfront__enable_cloudfront_oac" {
   type    = any
-  default = null
+  default = true
 }
 
 variable "cloudfront__enable_log_api_origin" {
@@ -756,7 +622,7 @@ variable "cloudfront__manage_route53_record" {
 
 variable "cloudfront__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 variable "cloudfront__route53_zone_id" {
@@ -1005,7 +871,7 @@ variable "codedeploy__ecs_service_names" {
 
 variable "codedeploy__enable_codedeploy" {
   type    = any
-  default = null
+  default = true
 }
 
 variable "codedeploy__lambda_deployments" {
@@ -1015,7 +881,7 @@ variable "codedeploy__lambda_deployments" {
 
 variable "codedeploy__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 # Source: modules/codedeploy/main.tf
@@ -1168,7 +1034,7 @@ variable "cognito__allow_admin_create_user_only" {
 
 variable "cognito__aws_region" {
   type    = any
-  default = null
+  default = "ap-southeast-1"
 }
 
 variable "cognito__callback_urls" {
@@ -1198,7 +1064,7 @@ variable "cognito__mfa_configuration" {
 
 variable "cognito__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 variable "cognito__refresh_token_validity_days" {
@@ -1368,7 +1234,7 @@ variable "dynamodb__enable_ttl" {
 
 variable "dynamodb__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 # Source: modules/dynamodb/main.tf
@@ -1507,7 +1373,7 @@ variable "ecr__ecr_repository_names" {
 
 variable "ecr__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 # Source: modules/ecr/main.tf
@@ -1574,17 +1440,17 @@ variable "ecs__assign_public_ip" {
 
 variable "ecs__auth_mode" {
   type    = any
-  default = null
+  default = "hybrid"
 }
 
 variable "ecs__aws_region" {
   type    = any
-  default = null
+  default = "ap-southeast-1"
 }
 
 variable "ecs__cloudwatch_log_retention_days" {
   type    = any
-  default = null
+  default = 30
 }
 
 variable "ecs__cognito_audience" {
@@ -1634,7 +1500,7 @@ variable "ecs__ecr_repository_urls" {
 
 variable "ecs__ecs_max_capacity" {
   type    = any
-  default = null
+  default = 2
 }
 
 variable "ecs__ecs_min_capacity" {
@@ -1689,17 +1555,17 @@ variable "ecs__enable_deployment_alarms" {
 
 variable "ecs__enable_service_discovery" {
   type    = any
-  default = null
+  default = true
 }
 
 variable "ecs__enable_stateful_service_scale_out" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "ecs__environment" {
   type    = any
-  default = null
+  default = "prod"
 }
 
 variable "ecs__image_tags" {
@@ -1719,12 +1585,12 @@ variable "ecs__log_api_base_url" {
 
 variable "ecs__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 variable "ecs__project_name" {
   type    = any
-  default = null
+  default = "scroogebank-crm"
 }
 
 variable "ecs__root_admin_email" {
@@ -1749,7 +1615,7 @@ variable "ecs__service_subnet_ids" {
 
 variable "ecs__ses_sender_email" {
   type    = any
-  default = null
+  default = "verification@crm.local"
 }
 
 variable "ecs__target_group_arns" {
@@ -2356,12 +2222,12 @@ variable "lambda__audit_sqs_arn" {
 
 variable "lambda__auth_mode" {
   type    = any
-  default = null
+  default = "hybrid"
 }
 
 variable "lambda__cloudwatch_log_retention_days" {
   type    = any
-  default = null
+  default = 30
 }
 
 variable "lambda__cognito_audience" {
@@ -2416,7 +2282,7 @@ variable "lambda__enable_aml_consumer" {
 
 variable "lambda__enable_aml_lambda" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "lambda__enable_audit_consumer" {
@@ -2426,12 +2292,12 @@ variable "lambda__enable_audit_consumer" {
 
 variable "lambda__enable_log_lambda" {
   type    = any
-  default = null
+  default = true
 }
 
 variable "lambda__enable_sftp_transaction_collector" {
   type    = any
-  default = null
+  default = true
 }
 
 variable "lambda__enable_verification_lambda" {
@@ -2441,7 +2307,7 @@ variable "lambda__enable_verification_lambda" {
 
 variable "lambda__environment" {
   type    = any
-  default = null
+  default = "prod"
 }
 
 variable "lambda__jwt_hmac_secret_arn" {
@@ -2481,7 +2347,7 @@ variable "lambda__log_lambda_zip_path" {
 
 variable "lambda__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 variable "lambda__private_subnet_ids" {
@@ -2491,12 +2357,12 @@ variable "lambda__private_subnet_ids" {
 
 variable "lambda__project_name" {
   type    = any
-  default = null
+  default = "scroogebank-crm"
 }
 
 variable "lambda__ses_sender_email" {
   type    = any
-  default = null
+  default = "verification@crm.local"
 }
 
 variable "lambda__sftp_transaction_collector_memory_size" {
@@ -2972,17 +2838,17 @@ variable "network__db_subnet_cidrs" {
 
 variable "network__enable_multi_az_nat" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "network__enable_nat_gateway" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "network__enable_vpc_flow_logs" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "network__flow_log_retention_days" {
@@ -2992,7 +2858,7 @@ variable "network__flow_log_retention_days" {
 
 variable "network__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 variable "network__private_subnet_cidrs" {
@@ -3305,7 +3171,7 @@ variable "observability__alb_unhealthy_host_threshold" {
 
 variable "observability__aws_region" {
   type    = any
-  default = null
+  default = "ap-southeast-1"
 }
 
 variable "observability__cloudtrail_bucket_force_destroy" {
@@ -3340,7 +3206,7 @@ variable "observability__enable_alb_alarms" {
 
 variable "observability__enable_cloudtrail" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "observability__enable_dashboard" {
@@ -3365,7 +3231,7 @@ variable "observability__enable_ses_alarms" {
 
 variable "observability__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 variable "observability__rds_cpu_alarm_threshold" {
@@ -3961,12 +3827,12 @@ variable "rds__db_allocated_storage" {
 
 variable "rds__db_backup_retention_days" {
   type    = any
-  default = null
+  default = 1
 }
 
 variable "rds__db_deletion_protection" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "rds__db_engine_version" {
@@ -3976,17 +3842,17 @@ variable "rds__db_engine_version" {
 
 variable "rds__db_instance_class" {
   type    = any
-  default = null
+  default = "db.t4g.micro"
 }
 
 variable "rds__db_max_allocated_storage" {
   type    = any
-  default = null
+  default = 20
 }
 
 variable "rds__db_multi_az" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "rds__db_name" {
@@ -4016,7 +3882,7 @@ variable "rds__db_security_group_id" {
 
 variable "rds__db_skip_final_snapshot" {
   type    = any
-  default = null
+  default = true
 }
 
 variable "rds__db_username" {
@@ -4026,7 +3892,7 @@ variable "rds__db_username" {
 
 variable "rds__environment" {
   type    = any
-  default = null
+  default = "prod"
 }
 
 variable "rds__iam_database_authentication_enabled" {
@@ -4036,7 +3902,7 @@ variable "rds__iam_database_authentication_enabled" {
 
 variable "rds__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 variable "rds__performance_insights_enabled" {
@@ -4051,7 +3917,7 @@ variable "rds__private_subnet_ids" {
 
 variable "rds__project_name" {
   type    = any
-  default = null
+  default = "scroogebank-crm"
 }
 
 # Source: modules/rds/kms.tf
@@ -4205,7 +4071,7 @@ variable "s3__frontend_bucket_allow_public" {
 
 variable "s3__frontend_bucket_force_destroy" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "s3__frontend_bucket_name" {
@@ -4450,7 +4316,7 @@ variable "security__audit_sqs_arn" {
 
 variable "security__aws_region" {
   type    = any
-  default = null
+  default = "ap-southeast-1"
 }
 
 variable "security__backend_lock_table_name" {
@@ -4480,27 +4346,27 @@ variable "security__db_username" {
 
 variable "security__enable_aml_pipeline" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "security__enable_audit_pipeline" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "security__enable_sftp_transaction_collector" {
   type    = any
-  default = null
+  default = true
 }
 
 variable "security__enable_verification_pipeline" {
   type    = any
-  default = null
+  default = true
 }
 
 variable "security__environment" {
   type    = any
-  default = null
+  default = "prod"
 }
 
 variable "security__jwt_hmac_secret" {
@@ -4510,22 +4376,22 @@ variable "security__jwt_hmac_secret" {
 
 variable "security__lab_role_arn" {
   type    = any
-  default = null
+  default = ""
 }
 
 variable "security__lab_role_name" {
   type    = any
-  default = null
+  default = ""
 }
 
 variable "security__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 variable "security__project_name" {
   type    = any
-  default = null
+  default = "scroogebank-crm"
 }
 
 variable "security__root_admin_password" {
@@ -5521,7 +5387,7 @@ resource "aws_ses_identity_notification_topic" "ses__events" {
 # Variables for module sns
 variable "sns__alarm_notification_email" {
   type    = any
-  default = null
+  default = "crm-alerts-prod@crm.local"
 }
 
 variable "sns__enable_alarm_topic" {
@@ -5531,17 +5397,17 @@ variable "sns__enable_alarm_topic" {
 
 variable "sns__enable_verification_pipeline" {
   type    = any
-  default = null
+  default = true
 }
 
 variable "sns__environment" {
   type    = any
-  default = null
+  default = "prod"
 }
 
 variable "sns__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 variable "sns__notification_email" {
@@ -5614,17 +5480,17 @@ variable "sqs__dlq_retention_seconds" {
 
 variable "sqs__enable_aml_pipeline" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "sqs__enable_audit_pipeline" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "sqs__environment" {
   type    = any
-  default = null
+  default = "prod"
 }
 
 variable "sqs__max_receive_count" {
@@ -5639,7 +5505,7 @@ variable "sqs__message_retention_seconds" {
 
 variable "sqs__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
 
 # Source: modules/sqs/main.tf
@@ -5720,10 +5586,10 @@ resource "aws_sqs_queue" "sqs__aml" {
 # Variables for module waf
 variable "waf__enable_waf" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "waf__name_prefix" {
   type    = any
-  default = null
+  default = "scroogebank-crm-prod"
 }
