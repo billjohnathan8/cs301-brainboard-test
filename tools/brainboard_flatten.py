@@ -364,6 +364,47 @@ def _normalize_kms_rotation_period(block_text: str) -> str:
     return block_text[:insert_at] + f"\n{indent}rotation_period_in_days = 365" + block_text[insert_at:]
 
 
+def _normalize_route53_set_identifier(block_text: str) -> str:
+    if re.search(r"(?m)^\s*set_identifier\s*=", block_text):
+        return block_text
+
+    header_match = re.search(
+        r'(?m)^(\s*)resource\s+"aws_route53_record"\s+"([^"]+)"\s*{',
+        block_text,
+    )
+    if not header_match:
+        return block_text
+
+    indent = header_match.group(1) + "  "
+    resource_name = header_match.group(2)
+
+    if re.search(r"(?m)^\s*for_each\s*=", block_text):
+        set_identifier_expr = f'try(tostring(each.key), "{resource_name}")'
+    elif re.search(r"(?m)^\s*count\s*=", block_text):
+        set_identifier_expr = f'"{resource_name}-${{count.index}}"'
+    else:
+        set_identifier_expr = f'"{resource_name}"'
+
+    lines = block_text.rstrip().splitlines()
+    if not lines:
+        return block_text
+
+    close_idx = len(lines) - 1
+    while close_idx >= 0 and lines[close_idx].strip() == "":
+        close_idx -= 1
+    if close_idx < 0 or lines[close_idx].strip() != "}":
+        return block_text
+
+    insert_idx = close_idx
+    for idx, line in enumerate(lines):
+        if re.match(r"^\s*type\s*=", line):
+            insert_idx = idx + 1
+            break
+
+    lines.insert(insert_idx, f"{indent}set_identifier = {set_identifier_expr}")
+    return "\n".join(lines)
+
+
 def _rewrite_unsupported_refs_for_visualization(block_text: str) -> str:
     # Keep generated Terraform self-consistent after omitting random_password resources.
     return RANDOM_PASSWORD_REF_RE.sub('"brainboard-placeholder"', block_text)
@@ -666,6 +707,8 @@ def generate_brainboard_tf() -> tuple[Path, bool]:
                 block_text = _normalize_cloudfront_origin_access_identity(block_text)
             if kind == "resource" and label_1 == "aws_kms_key":
                 block_text = _normalize_kms_rotation_period(block_text)
+            if kind == "resource" and label_1 == "aws_route53_record":
+                block_text = _normalize_route53_set_identifier(block_text)
             if kind == "resource" and label_1 in UNSUPPORTED_BRAINBOARD_RESOURCE_TYPES:
                 continue
 
