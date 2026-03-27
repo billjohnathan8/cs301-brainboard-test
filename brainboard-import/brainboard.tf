@@ -6,13 +6,13 @@
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
-    aws = { source = "hashicorp/aws", version = "~> 6.0" }
+    aws    = { source = "hashicorp/aws", version = "~> 6.0" }
     random = { source = "hashicorp/random", version = "~> 3.0" }
   }
 }
 
 provider "aws" {
-  region = "ap-southeast-1"
+  region                      = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -20,8 +20,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias  = "us_east_1"
-  region = "us-east-1"
+  alias                       = "us_east_1"
+  region                      = "us-east-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -29,8 +29,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias  = "ap_southeast_1"
-  region = "ap-southeast-1"
+  alias                       = "ap_southeast_1"
+  region                      = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -61,7 +61,7 @@ variable "alb__enable_blue_green_tg" {
 
 variable "alb__manage_route53_record" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "alb__name_prefix" {
@@ -86,7 +86,7 @@ variable "alb__service_health_check_path" {
 
 variable "alb__use_custom_domain" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "alb__vpc_id" {
@@ -177,27 +177,12 @@ resource "aws_lb_listener" "alb__http" {
   port              = 80
   protocol          = "HTTP"
 
-  dynamic "default_action" {
-    for_each = var.alb__use_custom_domain ? [1] : []
-    content {
-      type = "redirect"
-      redirect {
-        port        = "443"
-        protocol    = "HTTPS"
-        status_code = "HTTP_301"
-      }
-    }
-  }
-
-  dynamic "default_action" {
-    for_each = var.alb__use_custom_domain ? [] : [1]
-    content {
-      type = "fixed-response"
-      fixed_response {
-        content_type = "application/json"
-        message_body = "{\"message\":\"Not Found\"}"
-        status_code  = "404"
-      }
+  default_action {
+    type = "fixed-response"
+    fixed_response {
+      content_type = "application/json"
+      message_body = "{\"message\":\"Not Found\"}"
+      status_code  = "404"
     }
   }
 }
@@ -322,7 +307,7 @@ variable "apigateway__project_name" {
 
 variable "apigateway__use_custom_domain" {
   type    = any
-  default = null
+  default = false
 }
 
 # Source: modules/apigateway/main.tf
@@ -587,7 +572,7 @@ variable "cloudfront__enable_cloudfront_oac" {
 
 variable "cloudfront__enable_log_api_origin" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "cloudfront__frontend_bucket_arn" {
@@ -617,7 +602,7 @@ variable "cloudfront__log_api_origin_domain_name" {
 
 variable "cloudfront__manage_route53_record" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "cloudfront__name_prefix" {
@@ -632,7 +617,7 @@ variable "cloudfront__route53_zone_id" {
 
 variable "cloudfront__use_custom_domain" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "cloudfront__waf_arn" {
@@ -689,7 +674,7 @@ resource "aws_cloudfront_distribution" "cloudfront__frontend" {
     origin_access_control_id = var.cloudfront__enable_cloudfront_oac ? aws_cloudfront_origin_access_control.cloudfront__frontend[0].id : null
 
     s3_origin_config {
-      origin_access_identity = ""
+      origin_access_identity = "origin-access-identity/cloudfront/brainboard-placeholder"
     }
   }
 
@@ -1209,27 +1194,27 @@ resource "aws_cognito_user_pool_domain" "cognito__this" {
 # Variables for module dynamodb
 variable "dynamodb__billing_mode" {
   type    = any
-  default = null
+  default = "PAY_PER_REQUEST"
 }
 
 variable "dynamodb__enable_aml_table" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "dynamodb__enable_audit_table" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "dynamodb__enable_point_in_time_recovery" {
   type    = any
-  default = null
+  default = true
 }
 
 variable "dynamodb__enable_ttl" {
   type    = any
-  default = null
+  default = false
 }
 
 variable "dynamodb__name_prefix" {
@@ -1270,27 +1255,15 @@ resource "aws_dynamodb_table" "dynamodb__audit_logs" {
   global_secondary_index {
     name            = "user-index"
     projection_type = "ALL"
-    key_schema {
-      attribute_name = "user_id"
-      key_type       = "HASH"
-    }
-    key_schema {
-      attribute_name = "sk"
-      key_type       = "RANGE"
-    }
+    hash_key        = "user_id"
+    range_key       = "sk"
   }
 
   global_secondary_index {
     name            = "client-index"
     projection_type = "ALL"
-    key_schema {
-      attribute_name = "client_id"
-      key_type       = "HASH"
-    }
-    key_schema {
-      attribute_name = "sk"
-      key_type       = "RANGE"
-    }
+    hash_key        = "client_id"
+    range_key       = "sk"
   }
 
   point_in_time_recovery {
@@ -1335,14 +1308,8 @@ resource "aws_dynamodb_table" "dynamodb__aml_reports" {
   global_secondary_index {
     name            = "entity-index"
     projection_type = "ALL"
-    key_schema {
-      attribute_name = "entity_id"
-      key_type       = "HASH"
-    }
-    key_schema {
-      attribute_name = "sk"
-      key_type       = "RANGE"
-    }
+    hash_key        = "entity_id"
+    range_key       = "sk"
   }
 
   point_in_time_recovery {
@@ -3926,6 +3893,7 @@ resource "aws_kms_key" "rds__rds" {
   description             = "Customer-managed KMS key for ${var.rds__name_prefix} RDS encryption"
   deletion_window_in_days = 10
   enable_key_rotation     = true
+  rotation_period_in_days = 365
 
   tags = {
     Name        = "${var.rds__name_prefix}-rds-key"
