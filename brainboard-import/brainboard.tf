@@ -6,13 +6,13 @@
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
-    aws    = { source = "hashicorp/aws", version = "~> 6.0" }
+    aws = { source = "hashicorp/aws", version = "~> 6.0" }
     random = { source = "hashicorp/random", version = "~> 3.0" }
   }
 }
 
 provider "aws" {
-  region                      = "ap-southeast-1"
+  region = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -20,8 +20,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias                       = "us_east_1"
-  region                      = "us-east-1"
+  alias  = "us_east_1"
+  region = "us-east-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -29,8 +29,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias                       = "ap_southeast_1"
-  region                      = "ap-southeast-1"
+  alias  = "ap_southeast_1"
+  region = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -255,6 +255,8 @@ resource "aws_route53_record" "alb__alb" {
   type    = "A"
 
   set_identifier = "alb__alb-${count.index}"
+
+  multivalue_answer_routing_policy = true
 
   alias {
     name                   = aws_lb.alb__crm.dns_name
@@ -818,6 +820,8 @@ resource "aws_route53_record" "cloudfront__cloudfront" {
   type    = "A"
 
   set_identifier = "cloudfront__cloudfront-${count.index}"
+
+  multivalue_answer_routing_policy = true
 
   alias {
     name                   = aws_cloudfront_distribution.cloudfront__frontend.domain_name
