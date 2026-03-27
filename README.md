@@ -29,4 +29,10 @@ python .\tools\brainboard_flatten.py --skip-static-analysis --skip-checkov
 
 # Clear repo helper
 python .\tools\prune_repo.py
+
+# Copy platform/terraform from main repo into this repo (read-only source)
+python .\tools\copy_main_repo_terraform.py
+
+# Master refresh: prune -> copy -> flatten
+python .\tools\refresh_from_main_repo.py
 ```
