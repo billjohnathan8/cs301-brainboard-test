@@ -191,6 +191,11 @@ def _replace_refs(block_text: str, res_map, data_map, var_map):
         "${path.module}/../../template/ecs_json.tpl",
         "${path.module}/../template/ecs_json.tpl",
     )
+    # Normalize literal relative path variants to a module-anchored path for CI reliability.
+    block_text = block_text.replace(
+        "./../template/ecs_json.tpl",
+        "${path.module}/../template/ecs_json.tpl",
+    )
     return block_text
 
 

@@ -35,6 +35,9 @@ python .\tools\brainboard_flatten.py --skip-checkov
 # Generate only (no static analysis)
 python .\tools\brainboard_flatten.py --skip-static-analysis --skip-checkov
 
+# Brainboard preflight (regen + init + validate in brainboard-import)
+powershell -ExecutionPolicy Bypass -File .\tools\brainboard_preflight_validate.ps1
+
 # Clear repo helper
 python .\tools\prune_repo.py
 
