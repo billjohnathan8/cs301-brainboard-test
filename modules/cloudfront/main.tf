@@ -175,3 +175,4 @@ resource "aws_s3_bucket_policy" "frontend" {
   bucket = var.frontend_bucket_id
   policy = local.frontend_bucket_policy_json
 }
+
