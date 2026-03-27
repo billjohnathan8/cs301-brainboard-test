@@ -701,6 +701,41 @@ def _neutral_aws_env():
     return env
 
 
+def _select_iac_cli() -> tuple[str, str]:
+    opentofu_cmd = shutil.which("opentofu") or shutil.which("tofu")
+    if opentofu_cmd:
+        return opentofu_cmd, "OpenTofu"
+
+    localappdata = os.environ.get("LOCALAPPDATA", "")
+    if localappdata:
+        winget_pkg_tofu = (
+            Path(localappdata)
+            / "Microsoft"
+            / "WinGet"
+            / "Packages"
+            / "OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe"
+            / "tofu.exe"
+        )
+        if winget_pkg_tofu.exists():
+            return str(winget_pkg_tofu), "OpenTofu"
+
+        winget_link_tofu = (
+            Path(localappdata)
+            / "Microsoft"
+            / "WinGet"
+            / "Links"
+            / "tofu.exe"
+        )
+        if winget_link_tofu.exists():
+            return str(winget_link_tofu), "OpenTofu"
+
+    terraform_cmd = shutil.which("terraform")
+    if terraform_cmd:
+        return terraform_cmd, "Terraform"
+
+    raise RuntimeError("No IaC CLI found. Install OpenTofu ('opentofu' or 'tofu') or Terraform.")
+
+
 def _run_command(cmd: list[str], cwd: Path, env=None, allow_failure: bool = False):
     start = time.perf_counter()
     _log(f"[run] {' '.join(cmd)} (cwd={cwd})")
@@ -892,6 +927,8 @@ def _feature_flag_values(declared_vars: set[str], artifact_paths: dict):
 
 def _run_static_analysis(terraform_dir: Path, tf_file: Path, run_checkov: bool):
     no_aws_env = _neutral_aws_env()
+    iac_cli, iac_cli_name = _select_iac_cli()
+    _log(f"IaC CLI selected for static analysis: {iac_cli_name} ({iac_cli})")
     generated_tfvars = terraform_dir / ".generated-feature-flags.auto.tfvars"
     artifact_paths = {}
 
@@ -912,31 +949,42 @@ def _run_static_analysis(terraform_dir: Path, tf_file: Path, run_checkov: bool):
 
     def step_1_fmt_check():
         fmt_result = _run_command(
-            ["terraform", "fmt", "-check", "-recursive"],
+            [iac_cli, "fmt", "-check", "-recursive"],
             cwd=terraform_dir,
             env=no_aws_env,
             allow_failure=True,
         )
         if fmt_result.returncode != 0:
-            _log("terraform fmt -check failed; auto-formatting generated files, then re-checking.")
-            _run_command(["terraform", "fmt", "-recursive"], cwd=terraform_dir, env=no_aws_env)
-            _run_command(["terraform", "fmt", "-check", "-recursive"], cwd=terraform_dir, env=no_aws_env)
+            _log(f"{iac_cli_name} fmt -check failed; auto-formatting generated files, then re-checking.")
+            _run_command([iac_cli, "fmt", "-recursive"], cwd=terraform_dir, env=no_aws_env)
+            _run_command([iac_cli, "fmt", "-check", "-recursive"], cwd=terraform_dir, env=no_aws_env)
 
     def step_2_clean_cache():
         terraform_cache_dir = terraform_dir / ".terraform"
         if terraform_cache_dir.exists():
-            shutil.rmtree(terraform_cache_dir)
-            _log(f"Deleted {terraform_cache_dir}")
+            for attempt in range(1, 6):
+                try:
+                    shutil.rmtree(terraform_cache_dir)
+                    _log(f"Deleted {terraform_cache_dir}")
+                    break
+                except PermissionError:
+                    if attempt == 5:
+                        raise
+                    sleep_seconds = 0.4 * attempt
+                    _log(
+                        f"Cache delete retry {attempt}/5 due to file lock; sleeping {sleep_seconds:.1f}s."
+                    )
+                    time.sleep(sleep_seconds)
         else:
             _log("No .terraform cache directory found; skipping delete.")
 
     def step_3_init():
-        _run_command(["terraform", "init", "-backend=false"], cwd=terraform_dir, env=no_aws_env)
+        _run_command([iac_cli, "init", "-backend=false"], cwd=terraform_dir, env=no_aws_env)
 
     def step_4_validate_baseline():
         if generated_tfvars.exists():
             generated_tfvars.unlink()
-        _run_command(["terraform", "validate"], cwd=terraform_dir, env=no_aws_env)
+        _run_command([iac_cli, "validate"], cwd=terraform_dir, env=no_aws_env)
 
     def step_5_build_artifacts():
         nonlocal artifact_paths
@@ -947,7 +995,7 @@ def _run_static_analysis(terraform_dir: Path, tf_file: Path, run_checkov: bool):
         declared_vars = _collect_declared_variables(tf_file)
         feature_values = _feature_flag_values(declared_vars, artifact_paths)
         _write_tfvars(generated_tfvars, feature_values)
-        _run_command(["terraform", "validate"], cwd=terraform_dir, env=no_aws_env)
+        _run_command([iac_cli, "validate"], cwd=terraform_dir, env=no_aws_env)
         generated_tfvars.unlink(missing_ok=True)
 
     def step_7_tflint():
@@ -1009,12 +1057,12 @@ def _run_static_analysis(terraform_dir: Path, tf_file: Path, run_checkov: bool):
             raise RuntimeError("Checkov reported blocking findings (CRITICAL/HIGH).")
 
     run_step("Step 0: Brainboard compatibility sanity check", step_0_brainboard_compatibility)
-    run_step("Step 1: Terraform format check", step_1_fmt_check)
+    run_step(f"Step 1: {iac_cli_name} format check", step_1_fmt_check)
     run_step("Step 2: Clean local Terraform cache", step_2_clean_cache)
-    run_step("Step 3: Terraform init (no backend)", step_3_init)
-    run_step("Step 4: Terraform validate (baseline)", step_4_validate_baseline)
+    run_step(f"Step 3: {iac_cli_name} init (no backend)", step_3_init)
+    run_step(f"Step 4: {iac_cli_name} validate (baseline)", step_4_validate_baseline)
     run_step("Step 5: Build operable Lambda artifacts", step_5_build_artifacts)
-    run_step("Step 6: Terraform validate (feature flags enabled)", step_6_validate_feature_flags)
+    run_step(f"Step 6: {iac_cli_name} validate (feature flags enabled)", step_6_validate_feature_flags)
     run_step("Step 7: TFLint init/run (if installed)", step_7_tflint)
 
     if run_checkov:

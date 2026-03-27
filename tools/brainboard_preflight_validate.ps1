@@ -35,6 +35,13 @@ foreach ($candidate in @("opentofu", "tofu")) {
     }
 }
 
+if (-not $tool -and $env:LOCALAPPDATA) {
+    $wingetTofu = Join-Path $env:LOCALAPPDATA "Microsoft\\WinGet\\Packages\\OpenTofu.Tofu_Microsoft.Winget.Source_8wekyb3d8bbwe\\tofu.exe"
+    if (Test-Path -LiteralPath $wingetTofu) {
+        $tool = $wingetTofu
+    }
+}
+
 if (-not $tool) {
     if ($StrictOpenTofu) {
         throw "OpenTofu CLI not found. Install 'opentofu' (or 'tofu') and retry."
