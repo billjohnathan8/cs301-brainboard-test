@@ -20,6 +20,14 @@ BLOCK_START_RE = re.compile(
 )
 VAR_REF_RE = re.compile(r"\bvar\.([A-Za-z_][A-Za-z0-9_]*)\b")
 VAR_DECL_RE = re.compile(r'(?m)^variable\s+"([^"]+)"\s*{')
+RANDOM_PASSWORD_REF_RE = re.compile(r"\brandom_password\.[A-Za-z_][A-Za-z0-9_]*\.result\b")
+
+# Brainboard does not currently provide identity cards for these resource types.
+# We omit them from visualization-only output to avoid import warning noise.
+UNSUPPORTED_BRAINBOARD_RESOURCE_TYPES = {
+    "random_password",
+    "aws_wafv2_web_acl",
+}
 
 
 class BuildLogger:
@@ -184,6 +192,70 @@ def _replace_refs(block_text: str, res_map, data_map, var_map):
     return block_text
 
 
+def _normalize_dynamodb_gsi_key_schema(block_text: str) -> str:
+    """Convert deprecated GSI hash_key/range_key args to key_schema blocks."""
+    lines = block_text.splitlines()
+    out = []
+    stack = []
+
+    block_open_re = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*{\s*$")
+    hash_re = re.compile(r'^\s*hash_key\s*=\s*(.+?)\s*$')
+    range_re = re.compile(r'^\s*range_key\s*=\s*(.+?)\s*$')
+
+    for line in lines:
+        stripped = line.strip()
+        m_open = block_open_re.match(line)
+
+        if m_open:
+            stack.append(
+                {
+                    "name": m_open.group(2),
+                    "indent": m_open.group(1),
+                    "hash_expr": None,
+                    "range_expr": None,
+                }
+            )
+            out.append(line)
+            continue
+
+        if stripped == "}" and stack:
+            current = stack[-1]
+            if current["name"] == "global_secondary_index":
+                key_indent = current["indent"] + "  "
+                if current["hash_expr"] is not None:
+                    out.append(f"{key_indent}key_schema {{")
+                    out.append(f"{key_indent}  attribute_name = {current['hash_expr']}")
+                    out.append(f'{key_indent}  key_type       = "HASH"')
+                    out.append(f"{key_indent}}}")
+                if current["range_expr"] is not None:
+                    out.append(f"{key_indent}key_schema {{")
+                    out.append(f"{key_indent}  attribute_name = {current['range_expr']}")
+                    out.append(f'{key_indent}  key_type       = "RANGE"')
+                    out.append(f"{key_indent}}}")
+            out.append(line)
+            stack.pop()
+            continue
+
+        if stack and stack[-1]["name"] == "global_secondary_index":
+            m_hash = hash_re.match(line)
+            if m_hash:
+                stack[-1]["hash_expr"] = m_hash.group(1)
+                continue
+            m_range = range_re.match(line)
+            if m_range:
+                stack[-1]["range_expr"] = m_range.group(1)
+                continue
+
+        out.append(line)
+
+    return "\n".join(out)
+
+
+def _rewrite_unsupported_refs_for_visualization(block_text: str) -> str:
+    # Keep generated Terraform self-consistent after omitting random_password resources.
+    return RANDOM_PASSWORD_REF_RE.sub('"brainboard-placeholder"', block_text)
+
+
 def _append_module_var_stubs(out_lines, module_name: str, var_map: dict):
     if not var_map:
         return
@@ -246,12 +318,13 @@ def generate_brainboard_tf() -> tuple[Path, bool]:
     out_lines.append("# Auto-generated Brainboard import file")
     out_lines.append("# Source: modules/*")
     out_lines.append("# Purpose: visualize resources (not intended for Terraform apply)")
+    out_lines.append("# Note: known Brainboard-unsupported resources are omitted.")
     out_lines.append("")
     out_lines.append("terraform {")
     out_lines.append('  required_version = ">= 1.5.0"')
     out_lines.append("  required_providers {")
-    out_lines.append('    aws = { source = "hashicorp/aws" }')
-    out_lines.append('    random = { source = "hashicorp/random" }')
+    out_lines.append('    aws = { source = "hashicorp/aws", version = "~> 6.0" }')
+    out_lines.append('    random = { source = "hashicorp/random", version = "~> 3.0" }')
     out_lines.append("  }")
     out_lines.append("}")
     out_lines.append("")
@@ -299,6 +372,11 @@ def generate_brainboard_tf() -> tuple[Path, bool]:
                 block_text = _rename_header(block_text, kind, label_1, label_2, new_name)
 
             block_text = _replace_refs(block_text, res_map, data_map, var_map)
+            block_text = _rewrite_unsupported_refs_for_visualization(block_text)
+            if kind == "resource" and label_1 == "aws_dynamodb_table":
+                block_text = _normalize_dynamodb_gsi_key_schema(block_text)
+            if kind == "resource" and label_1 in UNSUPPORTED_BRAINBOARD_RESOURCE_TYPES:
+                continue
 
             out_lines.append(f"# Source: {tf_file.relative_to(ROOT).as_posix()}")
             out_lines.append(block_text.rstrip())
