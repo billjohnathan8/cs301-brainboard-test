@@ -1,0 +1,32 @@
+#--------------------------------------------------
+# Terraform Backend Configuration Example
+#--------------------------------------------------
+# This file provides an example configuration for Terraform remote state backend
+# using AWS S3 and DynamoDB for state locking.
+#
+# Usage:
+#   1. Copy this file: cp backend.hcl.example backend.hcl
+#   2. Edit backend.hcl with your actual AWS resource names
+#   3. Initialize Terraform: terraform init -backend-config=backend.hcl
+#
+# For detailed setup instructions, see: docs/README.md
+#--------------------------------------------------
+
+# S3 bucket name for storing Terraform state (must be globally unique)
+bucket = "your-terraform-state-bucket-name"
+
+# Path within the S3 bucket where the state file will be stored
+key = "scroogebank-crm/dev/terraform.tfstate"
+
+# AWS region where the S3 bucket is located
+region = "ap-southeast-1"
+
+# DynamoDB table name for state locking (prevents concurrent modifications)
+dynamodb_table = "your-terraform-lock-table-name"
+
+# Enable server-side encryption for the state file
+encrypt = true
+
+# Optional: KMS key for additional encryption control
+# Uncomment and set if you want to use a custom KMS key
+# kms_key_id = "arn:aws:kms:REGION:ACCOUNT:key/KEY-ID"
