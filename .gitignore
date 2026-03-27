@@ -121,7 +121,7 @@ id_rsa
 .devtools/
 
 # Ignore IDE Configs
-.vscode/
+.vscode/*
 .VSCodeCounter/
 
 # Ignore Local Dev Files / Notes
