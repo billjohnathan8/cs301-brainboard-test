@@ -154,6 +154,7 @@ brainboard-import/.generated-lambda-artifacts/
 !brainboard-import/*.tf
 !brainboard-import/*.tf.json
 !brainboard-import/.terraform.lock.hcl
+brainboard-export/
 
 # Ignore Test Directories
 node_modules/
