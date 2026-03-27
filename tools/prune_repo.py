@@ -30,9 +30,9 @@ KEEP_NAMES = {
     "README.md",
     "NOTES.md",
     "brainboard-export",
-    ".vscode"
+    ".vscode",
+    "aws-architecture-diagram"
 }
-
 
 def _handle_remove_readonly(func, path, exc_info):
     # Make read-only files writable, then retry the failed delete operation.
