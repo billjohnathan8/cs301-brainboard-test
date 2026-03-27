@@ -348,7 +348,7 @@ def _run_command(cmd: list[str], cwd: Path, env=None, allow_failure: bool = Fals
     _log(f"[done] exit={result.returncode} duration={elapsed:.2f}s")
     if result.returncode != 0 and not allow_failure:
         raise RuntimeError(f"Command failed with exit code {result.returncode}: {' '.join(cmd)}")
-    return result.returncode
+    return result
 
 
 def _build_operable_lambda_artifacts(terraform_dir: Path):
@@ -522,18 +522,23 @@ def _run_static_analysis(terraform_dir: Path, tf_file: Path, run_checkov: bool):
     def run_step(step_name: str, fn):
         _log(f"{step_name} started")
         start = time.perf_counter()
-        fn()
-        elapsed = time.perf_counter() - start
-        _log(f"{step_name} completed in {elapsed:.2f}s")
+        try:
+            fn()
+            elapsed = time.perf_counter() - start
+            _log(f"{step_name} PASS ({elapsed:.2f}s)")
+        except Exception:
+            elapsed = time.perf_counter() - start
+            _log(f"{step_name} FAIL ({elapsed:.2f}s)")
+            raise
 
     def step_1_fmt_check():
-        fmt_status = _run_command(
+        fmt_result = _run_command(
             ["terraform", "fmt", "-check", "-recursive"],
             cwd=terraform_dir,
             env=no_aws_env,
             allow_failure=True,
         )
-        if fmt_status != 0:
+        if fmt_result.returncode != 0:
             _log("terraform fmt -check failed; auto-formatting generated files, then re-checking.")
             _run_command(["terraform", "fmt", "-recursive"], cwd=terraform_dir, env=no_aws_env)
             _run_command(["terraform", "fmt", "-check", "-recursive"], cwd=terraform_dir, env=no_aws_env)
@@ -578,7 +583,7 @@ def _run_static_analysis(terraform_dir: Path, tf_file: Path, run_checkov: bool):
         _run_command([sys.executable, "-m", "pip", "install", "checkov"], cwd=ROOT)
 
     def step_9_run_checkov():
-        _run_command(
+        result = _run_command(
             [
                 sys.executable,
                 "-m",
@@ -591,13 +596,38 @@ def _run_static_analysis(terraform_dir: Path, tf_file: Path, run_checkov: bool):
                 "cli",
                 "--compact",
                 "--quiet",
-                "--soft-fail",
                 "--hard-fail-on",
                 "CRITICAL,HIGH",
             ],
             cwd=terraform_dir,
             env=no_aws_env,
+            allow_failure=True,
         )
+        summary_match = re.search(
+            r"Passed checks:\s*(\d+),\s*Failed checks:\s*(\d+),\s*Skipped checks:\s*(\d+)",
+            result.stdout or "",
+        )
+        if summary_match:
+            passed = int(summary_match.group(1))
+            failed = int(summary_match.group(2))
+            skipped = int(summary_match.group(3))
+            if result.returncode == 0 and failed == 0:
+                _log(f"Checkov summary: PASS (passed={passed}, failed={failed}, skipped={skipped})")
+            elif result.returncode == 0:
+                _log(
+                    f"Checkov summary: WARN non-blocking findings (passed={passed}, failed={failed}, skipped={skipped})"
+                )
+            else:
+                _log(
+                    f"Checkov summary: FAIL blocking findings (passed={passed}, failed={failed}, skipped={skipped})"
+                )
+        else:
+            if result.returncode == 0:
+                _log("Checkov summary: PASS (no parsed summary line).")
+            else:
+                _log("Checkov summary: FAIL (no parsed summary line).")
+        if result.returncode != 0:
+            raise RuntimeError("Checkov reported blocking findings (CRITICAL/HIGH).")
 
     run_step("Step 1: Terraform format check", step_1_fmt_check)
     run_step("Step 2: Clean local Terraform cache", step_2_clean_cache)
@@ -633,6 +663,7 @@ def main():
 
     LOGGER = _prepare_build_logger()
     run_start = time.perf_counter()
+    pipeline_success = False
     _log(f"Build log file: {LOGGER.path}")
 
     try:
@@ -643,9 +674,16 @@ def main():
             _run_static_analysis(OUT_DIR, tf_file, run_checkov=not args.skip_checkov)
         else:
             _log("Static analysis skipped by flag.")
+        pipeline_success = True
+    except Exception as exc:
+        _log(f"PIPELINE FAILED: {exc}")
+        raise
     finally:
         total = time.perf_counter() - run_start
-        _log(f"Pipeline finished in {total:.2f}s")
+        if pipeline_success:
+            _log(f"PIPELINE SUCCESS: completed in {total:.2f}s")
+        else:
+            _log(f"PIPELINE FAILED: terminated after {total:.2f}s")
         LOGGER.close()
 
 
