@@ -149,11 +149,15 @@ test-results/
 
 # Brainboard import generated artifacts and local state/secrets
 brainboard-import/.generated-lambda-artifacts/
+brainboard-architecture-import/.generated-lambda-artifacts/
 
 # Keep core Brainboard Terraform files tracked for import/visualization
 !brainboard-import/*.tf
 !brainboard-import/*.tf.json
 !brainboard-import/.terraform.lock.hcl
+!brainboard-architecture-import/*.tf
+!brainboard-architecture-import/*.tf.json
+!brainboard-architecture-import/.terraform.lock.hcl
 brainboard-export/
 
 # Ignore Test Directories
