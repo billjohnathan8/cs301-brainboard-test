@@ -657,7 +657,8 @@ def generate_brainboard_tf() -> tuple[Path, bool]:
     out_lines.append("terraform {")
     out_lines.append('  required_version = ">= 1.5.0"')
     out_lines.append("  required_providers {")
-    out_lines.append('    aws = { source = "hashicorp/aws", version = "~> 6.0" }')
+    # Keep v5 for Brainboard preflight to avoid aws_dynamodb_table key warnings.
+    out_lines.append('    aws = { source = "hashicorp/aws", version = "~> 5.0" }')
     out_lines.append('    random = { source = "hashicorp/random", version = "~> 3.0" }')
     out_lines.append("  }")
     out_lines.append("}")

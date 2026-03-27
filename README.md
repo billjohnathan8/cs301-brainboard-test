@@ -21,6 +21,7 @@ python .\tools\brainboard_flatten.py
 - Brainboard preflight currently expects legacy `global_secondary_index.hash_key` / `range_key`.
 - Newer AWS provider schemas prefer `key_schema` blocks and may mark legacy keys deprecated in Terraform-aware tooling.
 - This repository intentionally keeps legacy GSI keys in `brainboard-import/brainboard.tf` so Brainboard imports succeed.
+- `tools/brainboard_flatten.py` pins generated Brainboard import to AWS provider `~> 5.0` to keep `tofu validate` warning-free with this legacy schema.
 - `tools/brainboard_flatten.py` enforces this conversion during generation.
 - VS Code warning suppression is handled via `.vscode/settings.json` by opening the generated file as `hcl`, so schema deprecation diagnostics do not distract from Brainboard import workflows.
 
