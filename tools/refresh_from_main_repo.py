@@ -9,6 +9,7 @@ Run the local refresh pipeline:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +20,7 @@ TOOLS_DIR = ROOT / "tools"
 PRUNE_SCRIPT = TOOLS_DIR / "prune_repo.py"
 COPY_SCRIPT = TOOLS_DIR / "copy_main_repo_terraform.py"
 FLATTEN_SCRIPT = TOOLS_DIR / "brainboard_flatten.py"
+OUTPUT_TF = ROOT / "brainboard-import" / "brainboard.tf"
 DEFAULT_SOURCE = Path(
     r"C:\code\work\smu-cs301-project\project-2025-26-t2-project-2025-26t2-g2-t3\platform\terraform"
 )
@@ -29,6 +31,16 @@ def _run(cmd: list[str]) -> None:
     result = subprocess.run(cmd, cwd=ROOT)
     if result.returncode != 0:
         raise SystemExit(result.returncode)
+
+
+def _file_sha256(path: Path) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def main() -> None:
@@ -64,14 +76,22 @@ def main() -> None:
     _run([python_exe, str(PRUNE_SCRIPT)])
     _run([python_exe, str(COPY_SCRIPT), "--source", str(args.source)])
 
+    before_hash = _file_sha256(OUTPUT_TF)
     flatten_cmd = [python_exe, str(FLATTEN_SCRIPT), "--profile", args.profile]
     if args.skip_static_analysis:
         flatten_cmd.append("--skip-static-analysis")
     if args.skip_checkov:
         flatten_cmd.append("--skip-checkov")
     _run(flatten_cmd)
+    after_hash = _file_sha256(OUTPUT_TF)
+
+    if before_hash != after_hash:
+        status = "CHANGED"
+    else:
+        status = "UNCHANGED"
 
     print("Pipeline complete.")
+    print(f"brainboard-import/brainboard.tf: {status}")
 
 
 if __name__ == "__main__":
