@@ -365,7 +365,10 @@ def _normalize_kms_rotation_period(block_text: str) -> str:
 
 
 def _normalize_route53_set_identifier(block_text: str) -> str:
-    if re.search(r"(?m)^\s*set_identifier\s*=", block_text):
+    has_set_identifier = re.search(r"(?m)^\s*set_identifier\s*=", block_text) is not None
+    has_multivalue_routing = re.search(r"(?m)^\s*multivalue_answer_routing_policy\s*=", block_text) is not None
+
+    if has_set_identifier and has_multivalue_routing:
         return block_text
 
     header_match = re.search(
@@ -378,12 +381,14 @@ def _normalize_route53_set_identifier(block_text: str) -> str:
     indent = header_match.group(1) + "  "
     resource_name = header_match.group(2)
 
-    if re.search(r"(?m)^\s*for_each\s*=", block_text):
-        set_identifier_expr = f'try(tostring(each.key), "{resource_name}")'
-    elif re.search(r"(?m)^\s*count\s*=", block_text):
-        set_identifier_expr = f'"{resource_name}-${{count.index}}"'
-    else:
-        set_identifier_expr = f'"{resource_name}"'
+    set_identifier_expr = None
+    if not has_set_identifier:
+        if re.search(r"(?m)^\s*for_each\s*=", block_text):
+            set_identifier_expr = f'try(tostring(each.key), "{resource_name}")'
+        elif re.search(r"(?m)^\s*count\s*=", block_text):
+            set_identifier_expr = f'"{resource_name}-${{count.index}}"'
+        else:
+            set_identifier_expr = f'"{resource_name}"'
 
     lines = block_text.rstrip().splitlines()
     if not lines:
@@ -401,7 +406,14 @@ def _normalize_route53_set_identifier(block_text: str) -> str:
             insert_idx = idx + 1
             break
 
-    lines.insert(insert_idx, f"{indent}set_identifier = {set_identifier_expr}")
+    lines_to_insert = []
+    if not has_set_identifier and set_identifier_expr is not None:
+        lines_to_insert.append(f"{indent}set_identifier = {set_identifier_expr}")
+    if not has_multivalue_routing:
+        lines_to_insert.append(f"{indent}multivalue_answer_routing_policy = true")
+
+    for offset, line in enumerate(lines_to_insert):
+        lines.insert(insert_idx + offset, line)
     return "\n".join(lines)
 
 
