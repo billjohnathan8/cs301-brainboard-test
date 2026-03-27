@@ -195,7 +195,7 @@ def _replace_refs(block_text: str, res_map, data_map, var_map):
 
 
 def _normalize_dynamodb_gsi_key_schema(block_text: str) -> str:
-    """Convert deprecated GSI hash_key/range_key args to key_schema blocks."""
+    """Normalize DynamoDB GSIs to hash_key/range_key for Brainboard compatibility."""
     lines = block_text.splitlines()
     out = []
     stack = []
@@ -203,37 +203,48 @@ def _normalize_dynamodb_gsi_key_schema(block_text: str) -> str:
     block_open_re = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*{\s*$")
     hash_re = re.compile(r'^\s*hash_key\s*=\s*(.+?)\s*$')
     range_re = re.compile(r'^\s*range_key\s*=\s*(.+?)\s*$')
+    attr_re = re.compile(r'^\s*attribute_name\s*=\s*(.+?)\s*$')
+    key_type_re = re.compile(r'^\s*key_type\s*=\s*"([^"]+)"\s*$')
 
     for line in lines:
         stripped = line.strip()
         m_open = block_open_re.match(line)
 
         if m_open:
-            stack.append(
-                {
-                    "name": m_open.group(2),
-                    "indent": m_open.group(1),
-                    "hash_expr": None,
-                    "range_expr": None,
-                }
-            )
+            frame = {
+                "name": m_open.group(2),
+                "indent": m_open.group(1),
+                "hash_expr": None,
+                "range_expr": None,
+                "hash_seen": False,
+                "range_seen": False,
+                "attr_expr": None,
+                "key_type": None,
+            }
+            stack.append(frame)
+            if frame["name"] == "key_schema" and len(stack) >= 2 and stack[-2]["name"] == "global_secondary_index":
+                continue
             out.append(line)
             continue
 
         if stripped == "}" and stack:
             current = stack[-1]
+
+            if current["name"] == "key_schema" and len(stack) >= 2 and stack[-2]["name"] == "global_secondary_index":
+                parent = stack[-2]
+                if current["key_type"] == "HASH" and current["attr_expr"] is not None:
+                    parent["hash_expr"] = current["attr_expr"]
+                if current["key_type"] == "RANGE" and current["attr_expr"] is not None:
+                    parent["range_expr"] = current["attr_expr"]
+                stack.pop()
+                continue
+
             if current["name"] == "global_secondary_index":
                 key_indent = current["indent"] + "  "
-                if current["hash_expr"] is not None:
-                    out.append(f"{key_indent}key_schema {{")
-                    out.append(f"{key_indent}  attribute_name = {current['hash_expr']}")
-                    out.append(f'{key_indent}  key_type       = "HASH"')
-                    out.append(f"{key_indent}}}")
-                if current["range_expr"] is not None:
-                    out.append(f"{key_indent}key_schema {{")
-                    out.append(f"{key_indent}  attribute_name = {current['range_expr']}")
-                    out.append(f'{key_indent}  key_type       = "RANGE"')
-                    out.append(f"{key_indent}}}")
+                if current["hash_expr"] is not None and not current["hash_seen"]:
+                    out.append(f"{key_indent}hash_key        = {current['hash_expr']}")
+                if current["range_expr"] is not None and not current["range_seen"]:
+                    out.append(f"{key_indent}range_key       = {current['range_expr']}")
             out.append(line)
             stack.pop()
             continue
@@ -242,20 +253,148 @@ def _normalize_dynamodb_gsi_key_schema(block_text: str) -> str:
             m_hash = hash_re.match(line)
             if m_hash:
                 stack[-1]["hash_expr"] = m_hash.group(1)
+                stack[-1]["hash_seen"] = True
+                out.append(line)
                 continue
             m_range = range_re.match(line)
             if m_range:
                 stack[-1]["range_expr"] = m_range.group(1)
+                stack[-1]["range_seen"] = True
+                out.append(line)
                 continue
+
+        if stack and stack[-1]["name"] == "key_schema" and len(stack) >= 2 and stack[-2]["name"] == "global_secondary_index":
+            m_attr = attr_re.match(line)
+            if m_attr:
+                stack[-1]["attr_expr"] = m_attr.group(1)
+                continue
+            m_key_type = key_type_re.match(line)
+            if m_key_type:
+                stack[-1]["key_type"] = m_key_type.group(1).upper()
+                continue
+            continue
 
         out.append(line)
 
     return "\n".join(out)
 
 
+def _strip_dynamic_block_instances(block_text: str, block_name: str) -> str:
+    pattern = re.compile(rf'(?m)^\s*dynamic\s+"{re.escape(block_name)}"\s*{{')
+    out = []
+    pos = 0
+
+    while True:
+        m = pattern.search(block_text, pos)
+        if not m:
+            out.append(block_text[pos:])
+            break
+        out.append(block_text[pos : m.start()])
+        dynamic_block, end = _extract_block(block_text, m.start())
+        if not dynamic_block:
+            out.append(block_text[m.start() :])
+            break
+        pos = end
+        if pos < len(block_text) and block_text[pos] == "\n":
+            pos += 1
+
+    normalized = "".join(out)
+    return re.sub(r"\n{3,}", "\n\n", normalized)
+
+
+def _normalize_lb_listener_default_action(block_text: str) -> str:
+    if 'dynamic "default_action"' not in block_text:
+        return block_text
+
+    normalized = _strip_dynamic_block_instances(block_text, "default_action")
+    if re.search(r"(?m)^\s*default_action\s*{", normalized):
+        return normalized
+
+    lines = normalized.rstrip().splitlines()
+    if not lines:
+        return normalized
+
+    close_idx = len(lines) - 1
+    while close_idx >= 0 and lines[close_idx].strip() == "":
+        close_idx -= 1
+    if close_idx < 0 or lines[close_idx].strip() != "}":
+        return normalized
+
+    resource_indent = re.match(r"^(\s*)", lines[0]).group(1)
+    indent = resource_indent + "  "
+    default_action_block = [
+        f"{indent}default_action {{",
+        f'{indent}  type = "fixed-response"',
+        f"{indent}  fixed_response {{",
+        f'{indent}    content_type = "application/json"',
+        f'{indent}    message_body = "{{\\"message\\":\\"Not Found\\"}}"',
+        f'{indent}    status_code  = "404"',
+        f"{indent}  }}",
+        f"{indent}}}",
+    ]
+
+    new_lines = lines[:close_idx] + [""] + default_action_block + lines[close_idx:]
+    return "\n".join(new_lines)
+
+
+def _normalize_cloudfront_origin_access_identity(block_text: str) -> str:
+    return re.sub(
+        r'(?m)^(\s*origin_access_identity\s*=\s*)""\s*$',
+        r'\1"origin-access-identity/cloudfront/brainboard-placeholder"',
+        block_text,
+    )
+
+
+def _normalize_kms_rotation_period(block_text: str) -> str:
+    if not re.search(r"(?m)^\s*enable_key_rotation\s*=\s*true\s*$", block_text):
+        return block_text
+    if re.search(r"(?m)^\s*rotation_period_in_days\s*=", block_text):
+        return block_text
+
+    m = re.search(r"(?m)^(\s*)enable_key_rotation\s*=\s*true\s*$", block_text)
+    if not m:
+        return block_text
+    insert_at = m.end()
+    indent = m.group(1)
+    return block_text[:insert_at] + f"\n{indent}rotation_period_in_days = 365" + block_text[insert_at:]
+
+
 def _rewrite_unsupported_refs_for_visualization(block_text: str) -> str:
     # Keep generated Terraform self-consistent after omitting random_password resources.
     return RANDOM_PASSWORD_REF_RE.sub('"brainboard-placeholder"', block_text)
+
+
+FALLBACK_VAR_DEFAULTS = {
+    "use_custom_domain": False,
+    "enable_cloudfront_oac": True,
+    "enable_log_api_origin": False,
+    "enable_audit_table": False,
+    "enable_aml_table": False,
+    "enable_point_in_time_recovery": True,
+    "enable_ttl": False,
+    "billing_mode": "PAY_PER_REQUEST",
+    "manage_route53_record": False,
+}
+
+
+def _run_brainboard_compatibility_checks(tf_file: Path):
+    text = tf_file.read_text(encoding="utf-8")
+    issues = []
+
+    if 'dynamic "default_action"' in text:
+        issues.append('Found `dynamic "default_action"`; Brainboard preflight may miss required listener action fields.')
+    if "key_schema {" in text:
+        issues.append("Found DynamoDB `key_schema` blocks; Brainboard expects GSI `hash_key`/`range_key`.")
+    if re.search(r'(?m)^\s*origin_access_identity\s*=\s*""\s*$', text):
+        issues.append("Found empty CloudFront `origin_access_identity`; Brainboard treats it as missing.")
+    if re.search(r'(?ms)resource\s+"aws_kms_key"\s+"[^"]+"\s*{.*?enable_key_rotation\s*=\s*true', text) and "rotation_period_in_days" not in text:
+        issues.append("Found `aws_kms_key.enable_key_rotation = true` without `rotation_period_in_days`.")
+    if 'provider "aws"' in text and 'region = "ap-southeast-1"' not in text:
+        issues.append("No explicit `ap-southeast-1` provider region found in generated file.")
+
+    if issues:
+        formatted = "\n".join(f"- {issue}" for issue in issues)
+        raise RuntimeError(f"Brainboard compatibility check failed:\n{formatted}")
 
 
 def _append_module_var_stubs(out_lines, module_name: str, var_map: dict):
@@ -276,6 +415,8 @@ PROFILE_VAR_VALUES = {}
 
 
 def _resolve_module_var_default(var_name: str):
+    if var_name in FALLBACK_VAR_DEFAULTS:
+        return FALLBACK_VAR_DEFAULTS[var_name]
     if var_name in PROFILE_VAR_VALUES:
         return PROFILE_VAR_VALUES[var_name]
     if var_name == "name_prefix":
@@ -514,6 +655,12 @@ def generate_brainboard_tf() -> tuple[Path, bool]:
             block_text = _rewrite_unsupported_refs_for_visualization(block_text)
             if kind == "resource" and label_1 == "aws_dynamodb_table":
                 block_text = _normalize_dynamodb_gsi_key_schema(block_text)
+            if kind == "resource" and label_1 == "aws_lb_listener":
+                block_text = _normalize_lb_listener_default_action(block_text)
+            if kind == "resource" and label_1 == "aws_cloudfront_distribution":
+                block_text = _normalize_cloudfront_origin_access_identity(block_text)
+            if kind == "resource" and label_1 == "aws_kms_key":
+                block_text = _normalize_kms_rotation_period(block_text)
             if kind == "resource" and label_1 in UNSUPPORTED_BRAINBOARD_RESOURCE_TYPES:
                 continue
 
@@ -755,6 +902,9 @@ def _run_static_analysis(terraform_dir: Path, tf_file: Path, run_checkov: bool):
             _log(f"{step_name} FAIL ({elapsed:.2f}s)")
             raise
 
+    def step_0_brainboard_compatibility():
+        _run_brainboard_compatibility_checks(tf_file)
+
     def step_1_fmt_check():
         fmt_result = _run_command(
             ["terraform", "fmt", "-check", "-recursive"],
@@ -853,6 +1003,7 @@ def _run_static_analysis(terraform_dir: Path, tf_file: Path, run_checkov: bool):
         if result.returncode != 0:
             raise RuntimeError("Checkov reported blocking findings (CRITICAL/HIGH).")
 
+    run_step("Step 0: Brainboard compatibility sanity check", step_0_brainboard_compatibility)
     run_step("Step 1: Terraform format check", step_1_fmt_check)
     run_step("Step 2: Clean local Terraform cache", step_2_clean_cache)
     run_step("Step 3: Terraform init (no backend)", step_3_init)
