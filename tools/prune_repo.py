@@ -8,6 +8,7 @@ Default keep list:
 - build-logs/
 - .gitignore
 - README.md
+- NOTES.md
 
 Safety:
 - Always keeps .git/ to avoid corrupting repository metadata.
@@ -27,6 +28,7 @@ KEEP_NAMES = {
     ".git",
     ".gitignore",
     "README.md",
+    "NOTES.md",
 }
 
 
