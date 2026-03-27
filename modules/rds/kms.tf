@@ -8,6 +8,7 @@ resource "aws_kms_key" "rds" {
   description             = "Customer-managed KMS key for ${var.name_prefix} RDS encryption"
   deletion_window_in_days = 10
   enable_key_rotation     = true
+  rotation_period_in_days = 365
 
   tags = {
     Name        = "${var.name_prefix}-rds-key"
