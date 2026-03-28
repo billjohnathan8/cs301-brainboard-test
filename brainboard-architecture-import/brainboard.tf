@@ -247,29 +247,6 @@ resource "aws_lb_listener_rule" "alb__service" {
 
 # Source: modules/alb/route53.tf
 
-resource "aws_route53_record" "alb__alb" {
-  count = var.alb__manage_route53_record && var.alb__use_custom_domain && var.alb__route53_zone_id != "" ? 1 : 0
-
-  zone_id = var.alb__route53_zone_id
-  name    = var.alb__alb_subdomain
-  type    = "A"
-
-  set_identifier = "alb__alb"
-
-  alias {
-    name                   = aws_lb.alb__crm.dns_name
-    zone_id                = aws_lb.alb__crm.zone_id
-    evaluate_target_health = true
-  }
-
-  lifecycle {
-    # Prevent accidental deletion of DNS record
-    prevent_destroy = true
-    # Ignore changes to zone_id to prevent replacement if zone is recreated
-    ignore_changes = [zone_id]
-  }
-}
-
 # ---- Module: apigateway ----
 # Variables for module apigateway
 variable "apigateway__app_domain_name" {
@@ -747,29 +724,6 @@ locals {
 # Source: modules/cloudfront/main.tf
 
 # Source: modules/cloudfront/route53.tf
-
-resource "aws_route53_record" "cloudfront__cloudfront" {
-  count = var.cloudfront__manage_route53_record && var.cloudfront__use_custom_domain && var.cloudfront__route53_zone_id != "" ? 1 : 0
-
-  zone_id = var.cloudfront__route53_zone_id
-  name    = var.cloudfront__app_domain_name
-  type    = "A"
-
-  set_identifier = "cloudfront__cloudfront"
-
-  alias {
-    name                   = aws_cloudfront_distribution.cloudfront__frontend.domain_name
-    zone_id                = aws_cloudfront_distribution.cloudfront__frontend.hosted_zone_id
-    evaluate_target_health = false
-  }
-
-  lifecycle {
-    # Prevent accidental deletion of DNS record
-    prevent_destroy = true
-    # Ignore changes to zone_id to prevent replacement if zone is recreated
-    ignore_changes = [zone_id]
-  }
-}
 
 # ---- Module: codedeploy ----
 # Variables for module codedeploy
