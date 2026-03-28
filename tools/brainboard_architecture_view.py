@@ -43,6 +43,20 @@ CORE_RESOURCE_TYPES = {
     "aws_vpc",
 }
 
+# Flow-focused resources that preserve traffic and security relationships.
+FLOW_RESOURCE_TYPES = {
+    "aws_apigatewayv2_integration",
+    "aws_apigatewayv2_route",
+    "aws_apigatewayv2_stage",
+    "aws_lambda_permission",
+    "aws_lb_listener",
+    "aws_lb_listener_rule",
+    "aws_lb_target_group",
+    "aws_route_table",
+    "aws_route_table_association",
+    "aws_security_group",
+}
+
 # Optional data blocks to keep in architecture view when requested.
 OPTIONAL_CORE_DATA_TYPES = {
     "aws_availability_zones",
@@ -183,8 +197,12 @@ def _build_maps(blocks):
 
 
 def _build_keep_sets(resource_blocks, data_blocks, mode: str, include_core_data: bool):
+    seed_resource_types = set(CORE_RESOURCE_TYPES)
+    if mode == "flow":
+        seed_resource_types.update(FLOW_RESOURCE_TYPES)
+
     keep_resources = {
-        key for key in resource_blocks.keys() if key[0] in CORE_RESOURCE_TYPES
+        key for key in resource_blocks.keys() if key[0] in seed_resource_types
     }
     keep_data = (
         {key for key in data_blocks.keys() if key[0] in OPTIONAL_CORE_DATA_TYPES}
@@ -192,13 +210,13 @@ def _build_keep_sets(resource_blocks, data_blocks, mode: str, include_core_data:
         else set()
     )
 
-    if mode == "compatible":
+    if mode in {"compatible", "flow"}:
         # Keep small foundational data sources for safer dependency closure.
         keep_data.update(
             key for key in data_blocks.keys() if key[0] in OPTIONAL_CORE_DATA_TYPES
         )
 
-    if mode != "compatible":
+    if mode not in {"compatible", "flow"}:
         return keep_resources, keep_data
 
     changed = True
@@ -277,30 +295,99 @@ def _ensure_variable_block(text: str, variable_name: str, block_text: str):
     return text.rstrip() + "\n\n" + block_text.strip() + "\n"
 
 
-def _apply_brainboard_compatibility_patches(text: str):
+def _apply_brainboard_compatibility_patches(text: str, removed_resources):
     # Brainboard architecture preflight may not model these dependency resources
     # as architecture nodes. Route those links via explicit variables so import
     # does not fail even when helper resources are omitted in the visual graph.
-    replacements = {
-        "task_definition                    = aws_ecs_task_definition.ecs__service[each.key].arn": (
-            'task_definition                    = lookup(var.ecs__task_definition_arns, each.key, "arn:aws:ecs:${var.ecs__aws_region}:000000000000:task-definition/${var.ecs__name_prefix}-${each.key}:1")'
-        ),
-        "allocation_id = aws_eip.network__nat[count.index].id": (
-            'allocation_id = element(concat(var.network__nat_eip_allocation_ids, ["eipalloc-00000000000000000"]), count.index)'
-        ),
-        "kms_key_id                 = aws_kms_key.rds__rds.arn": (
-            "kms_key_id                 = var.rds__kms_key_arn"
-        ),
-        "parameter_group_name       = aws_db_parameter_group.rds__postgres.name": (
-            "parameter_group_name       = var.rds__db_parameter_group_name"
-        ),
-        "performance_insights_kms_key_id       = var.rds__performance_insights_enabled ? aws_kms_key.rds__rds.arn : null": (
-            "performance_insights_kms_key_id       = var.rds__performance_insights_enabled ? var.rds__kms_key_arn : null"
-        ),
-    }
+    replacement_specs = [
+        {
+            "remove_if_missing": ("aws_ecs_task_definition", "ecs__service"),
+            "old": "task_definition                    = aws_ecs_task_definition.ecs__service[each.key].arn",
+            "new": 'task_definition                    = lookup(var.ecs__task_definition_arns, each.key, "arn:aws:ecs:${var.ecs__aws_region}:000000000000:task-definition/${var.ecs__name_prefix}-${each.key}:1")',
+            "fallback_var": (
+                "ecs__task_definition_arns",
+                """
+variable "ecs__task_definition_arns" {
+  type    = any
+  default = {}
+}
+                """,
+            ),
+        },
+        {
+            "remove_if_missing": ("aws_eip", "network__nat"),
+            "old": "allocation_id = aws_eip.network__nat[count.index].id",
+            "new": 'allocation_id = element(concat(var.network__nat_eip_allocation_ids, ["eipalloc-00000000000000000"]), count.index)',
+            "fallback_var": (
+                "network__nat_eip_allocation_ids",
+                """
+variable "network__nat_eip_allocation_ids" {
+  type    = any
+  default = []
+}
+                """,
+            ),
+        },
+        {
+            "remove_if_missing": ("aws_kms_key", "rds__rds"),
+            "old": "kms_key_id                 = aws_kms_key.rds__rds.arn",
+            "new": "kms_key_id                 = var.rds__kms_key_arn",
+            "fallback_var": (
+                "rds__kms_key_arn",
+                """
+variable "rds__kms_key_arn" {
+  type    = any
+  default = "arn:aws:kms:ap-southeast-1:000000000000:key/00000000-0000-0000-0000-000000000000"
+}
+                """,
+            ),
+        },
+        {
+            "remove_if_missing": ("aws_db_parameter_group", "rds__postgres"),
+            "old": "parameter_group_name       = aws_db_parameter_group.rds__postgres.name",
+            "new": "parameter_group_name       = var.rds__db_parameter_group_name",
+            "fallback_var": (
+                "rds__db_parameter_group_name",
+                """
+variable "rds__db_parameter_group_name" {
+  type    = any
+  default = "default.postgres14"
+}
+                """,
+            ),
+        },
+        {
+            "remove_if_missing": ("aws_kms_key", "rds__rds"),
+            "old": "performance_insights_kms_key_id       = var.rds__performance_insights_enabled ? aws_kms_key.rds__rds.arn : null",
+            "new": "performance_insights_kms_key_id       = var.rds__performance_insights_enabled ? var.rds__kms_key_arn : null",
+            "fallback_var": (
+                "rds__kms_key_arn",
+                """
+variable "rds__kms_key_arn" {
+  type    = any
+  default = "arn:aws:kms:ap-southeast-1:000000000000:key/00000000-0000-0000-0000-000000000000"
+}
+                """,
+            ),
+        },
+        {
+            "remove_if_missing": ("aws_secretsmanager_secret", "security__root_admin_password"),
+            "old": "valueFrom = ((aws_secretsmanager_secret.security__root_admin_password.arn))",
+            "new": "valueFrom = var.ecs__root_admin_password_secret_arn",
+        },
+    ]
+    fallback_vars_to_add = {}
 
-    for old, new in replacements.items():
-        text = text.replace(old, new)
+    for spec in replacement_specs:
+        if spec["remove_if_missing"] not in removed_resources:
+            continue
+        if spec["old"] not in text:
+            continue
+        text = text.replace(spec["old"], spec["new"])
+        fallback_var = spec.get("fallback_var")
+        if fallback_var:
+            fallback_var_name, fallback_block = fallback_var
+            fallback_vars_to_add[fallback_var_name] = fallback_block
 
     # Brainboard currently mis-validates multivalue Route53 records that include
     # a set_identifier as if latency routing were also present. For architecture
@@ -308,46 +395,8 @@ def _apply_brainboard_compatibility_patches(text: str):
     text = re.sub(r"(?m)^\s*set_identifier\s*=.*\n", "", text)
     text = re.sub(r"(?m)^\s*multivalue_answer_routing_policy\s*=.*\n", "", text)
 
-    text = _ensure_variable_block(
-        text,
-        "ecs__task_definition_arns",
-        """
-variable "ecs__task_definition_arns" {
-  type    = any
-  default = {}
-}
-        """,
-    )
-    text = _ensure_variable_block(
-        text,
-        "network__nat_eip_allocation_ids",
-        """
-variable "network__nat_eip_allocation_ids" {
-  type    = any
-  default = []
-}
-        """,
-    )
-    text = _ensure_variable_block(
-        text,
-        "rds__kms_key_arn",
-        """
-variable "rds__kms_key_arn" {
-  type    = any
-  default = "arn:aws:kms:ap-southeast-1:000000000000:key/00000000-0000-0000-0000-000000000000"
-}
-        """,
-    )
-    text = _ensure_variable_block(
-        text,
-        "rds__db_parameter_group_name",
-        """
-variable "rds__db_parameter_group_name" {
-  type    = any
-  default = "default.postgres14"
-}
-        """,
-    )
+    for variable_name in sorted(fallback_vars_to_add):
+        text = _ensure_variable_block(text, variable_name, fallback_vars_to_add[variable_name])
     return text
 
 
@@ -394,11 +443,12 @@ def main():
     )
     parser.add_argument(
         "--mode",
-        choices=["core", "compatible"],
-        default="compatible",
+        choices=["core", "compatible", "flow"],
+        default="flow",
         help=(
-            "compatible: keep transitive dependencies to avoid unresolved references "
+            "flow: include additional traffic-path and security relationship resources "
             "(recommended default). "
+            "compatible: keep transitive dependencies with a smaller node set. "
             "core: keep only architecture-level types (closest to ~43-node view)."
         ),
     )
@@ -464,8 +514,10 @@ def main():
                 blocks_to_remove.append(block)
             if block.kind == "data" and key not in selected_data:
                 blocks_to_remove.append(block)
+        removed_resources = set(resource_blocks.keys()) - selected_resources
         return _apply_brainboard_compatibility_patches(
-            _strip_blocks(source_text, blocks_to_remove)
+            _strip_blocks(source_text, blocks_to_remove),
+            removed_resources=removed_resources,
         )
 
     output_text = build_output_text(keep_resources, keep_data)

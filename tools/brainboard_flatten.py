@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MODULES_DIR = ROOT / "modules"
+ROOT_MAIN_TF = ROOT / "main.tf"
 OUT_DIR = ROOT / "brainboard-import"
 OUT_FILE = OUT_DIR / "brainboard.tf"
 ENV_DIR = ROOT / "env"
@@ -23,6 +24,15 @@ BLOCK_START_RE = re.compile(
 VAR_REF_RE = re.compile(r"\bvar\.([A-Za-z_][A-Za-z0-9_]*)\b")
 VAR_DECL_RE = re.compile(r'(?m)^variable\s+"([^"]+)"\s*{')
 RANDOM_PASSWORD_REF_RE = re.compile(r"\brandom_password\.[A-Za-z_][A-Za-z0-9_]*\.result\b")
+MODULE_BLOCK_START_RE = re.compile(r'(?m)^\s*module\s+"([^"]+)"\s*{')
+OUTPUT_BLOCK_START_RE = re.compile(r'(?m)^\s*output\s+"([^"]+)"\s*{')
+MODULE_ASSIGNMENT_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$")
+MODULE_OUTPUT_REF_RE = re.compile(
+    r"\bmodule\.([A-Za-z_][A-Za-z0-9_]*)(?:\[[^\]]+\])?\.([A-Za-z_][A-Za-z0-9_]*)\b"
+)
+EXACT_MODULE_OUTPUT_REF_RE = re.compile(
+    r"^\s*module\.[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]+\])?\.[A-Za-z_][A-Za-z0-9_]*\s*$"
+)
 
 # Brainboard does not currently provide identity cards for these resource types.
 # We omit them from visualization-only output to avoid import warning noise.
@@ -197,6 +207,238 @@ def _replace_refs(block_text: str, res_map, data_map, var_map):
         "${path.module}/../template/ecs_json.tpl",
     )
     return block_text
+
+
+def _collect_root_module_inputs(root_main_tf: Path):
+    if not root_main_tf.exists():
+        return {}
+
+    text = root_main_tf.read_text(encoding="utf-8")
+    module_inputs = {}
+    pos = 0
+
+    while True:
+        m = MODULE_BLOCK_START_RE.search(text, pos)
+        if not m:
+            break
+        module_name = m.group(1)
+        block_text, end = _extract_block(text, m.start())
+        if not block_text:
+            pos = m.end()
+            continue
+
+        assignments = {}
+        for line in block_text.splitlines():
+            line = line.rstrip()
+            if not line or line.strip().startswith("#") or line.strip().startswith("//"):
+                continue
+            am = MODULE_ASSIGNMENT_RE.match(line)
+            if not am:
+                continue
+            key, value = am.group(1), _strip_inline_comment(am.group(2))
+            if key in {"source", "count", "depends_on", "providers"}:
+                continue
+            if value.endswith(("{", "[", "(")) or "<<" in value:
+                continue
+            assignments[key] = value.strip()
+
+        if assignments:
+            module_inputs[module_name] = assignments
+        pos = end
+
+    return module_inputs
+
+
+def _collect_module_output_values(modules_dir: Path):
+    outputs = {}
+    for module_dir in sorted(modules_dir.iterdir()):
+        if not module_dir.is_dir():
+            continue
+        module_name = module_dir.name
+        for tf_file in sorted(module_dir.rglob("*.tf")):
+            text = tf_file.read_text(encoding="utf-8")
+            pos = 0
+            while True:
+                m = OUTPUT_BLOCK_START_RE.search(text, pos)
+                if not m:
+                    break
+                output_name = m.group(1)
+                block_text, end = _extract_block(text, m.start())
+                if not block_text:
+                    pos = m.end()
+                    continue
+                value_match = re.search(r"(?m)^\s*value\s*=\s*(.+?)\s*$", block_text)
+                if value_match:
+                    value_expr = _strip_inline_comment(value_match.group(1)).strip()
+                    if value_expr.endswith(("{", "[", "(")):
+                        pos = end
+                        continue
+                    if (
+                        value_expr.count("{") != value_expr.count("}")
+                        or value_expr.count("[") != value_expr.count("]")
+                        or value_expr.count("(") != value_expr.count(")")
+                    ):
+                        pos = end
+                        continue
+                    outputs[(module_name, output_name)] = value_expr
+                pos = end
+    return outputs
+
+
+def _rewrite_expression_for_module(expr: str, module_name: str, module_resource_maps, module_data_maps, module_var_maps):
+    out = expr
+    data_map = module_data_maps.get(module_name, {})
+    res_map = module_resource_maps.get(module_name, {})
+    var_map = module_var_maps.get(module_name, {})
+
+    for (dtype, name), new_name in data_map.items():
+        out = re.sub(
+            rf"\bdata\.{re.escape(dtype)}\.{re.escape(name)}\b",
+            f"data.{dtype}.{new_name}",
+            out,
+        )
+    for (rtype, name), new_name in res_map.items():
+        out = re.sub(
+            rf"\b{re.escape(rtype)}\.{re.escape(name)}\b",
+            f"{rtype}.{new_name}",
+            out,
+        )
+    for old_name, new_name in var_map.items():
+        out = re.sub(
+            rf"\bvar\.{re.escape(old_name)}\b",
+            f"var.{new_name}",
+            out,
+        )
+    return out
+
+
+def _resolve_module_output_expression(
+    module_name: str,
+    output_name: str,
+    module_output_values,
+    module_resource_maps,
+    module_data_maps,
+    module_var_maps,
+    cache,
+    visiting,
+):
+    key = (module_name, output_name)
+    if key in cache:
+        return cache[key]
+    if key in visiting:
+        cache[key] = None
+        return None
+
+    expr = module_output_values.get(key)
+    if expr is None:
+        cache[key] = None
+        return None
+
+    visiting.add(key)
+    expanded_expr = _expand_module_output_refs(
+        expr,
+        module_output_values,
+        module_resource_maps,
+        module_data_maps,
+        module_var_maps,
+        cache,
+        visiting,
+    )
+    visiting.remove(key)
+
+    if expanded_expr is None:
+        cache[key] = None
+        return None
+
+    rewritten = _rewrite_expression_for_module(
+        expanded_expr,
+        module_name,
+        module_resource_maps,
+        module_data_maps,
+        module_var_maps,
+    )
+    cache[key] = rewritten
+    return rewritten
+
+
+def _expand_module_output_refs(
+    expr: str,
+    module_output_values,
+    module_resource_maps,
+    module_data_maps,
+    module_var_maps,
+    cache,
+    visiting,
+):
+    unresolved = False
+
+    def repl(match: re.Match):
+        nonlocal unresolved
+        target_module = match.group(1)
+        target_output = match.group(2)
+        resolved = _resolve_module_output_expression(
+            target_module,
+            target_output,
+            module_output_values,
+            module_resource_maps,
+            module_data_maps,
+            module_var_maps,
+            cache,
+            visiting,
+        )
+        if resolved is None:
+            unresolved = True
+            return match.group(0)
+        return f"({resolved})"
+
+    expanded = MODULE_OUTPUT_REF_RE.sub(repl, expr)
+    if unresolved and "module." in expanded:
+        return None
+    return expanded
+
+
+def _apply_root_module_wiring(
+    text: str,
+    root_module_inputs,
+    module_resource_maps,
+    module_data_maps,
+    module_var_maps,
+    module_output_values,
+):
+    cache = {}
+    rewired_refs = 0
+
+    for module_name, input_values in root_module_inputs.items():
+        var_map = module_var_maps.get(module_name, {})
+        if not var_map:
+            continue
+
+        for input_name, input_expr in input_values.items():
+            flat_var_name = var_map.get(input_name)
+            if not flat_var_name:
+                continue
+            if not EXACT_MODULE_OUTPUT_REF_RE.match(input_expr):
+                continue
+
+            resolved_expr = _expand_module_output_refs(
+                input_expr,
+                module_output_values,
+                module_resource_maps,
+                module_data_maps,
+                module_var_maps,
+                cache,
+                set(),
+            )
+            if not resolved_expr or "module." in resolved_expr:
+                continue
+            if re.search(r"\bvar\.(?![A-Za-z_][A-Za-z0-9_]*__)", resolved_expr):
+                continue
+
+            pattern = re.compile(rf"\bvar\.{re.escape(flat_var_name)}\b")
+            text, count = pattern.subn(f"({resolved_expr})", text)
+            rewired_refs += count
+
+    return text, rewired_refs
 
 
 def _normalize_dynamodb_gsi_key_schema(block_text: str) -> str:
@@ -668,6 +910,9 @@ def generate_brainboard_tf() -> tuple[Path, bool]:
     _append_aws_provider(out_lines, primary_region)
     _append_aws_provider(out_lines, "us-east-1", alias="us_east_1")
     _append_aws_provider(out_lines, "ap-southeast-1", alias="ap_southeast_1")
+    module_resource_maps = {}
+    module_data_maps = {}
+    module_var_maps = {}
 
     for module_dir in sorted(MODULES_DIR.iterdir()):
         if not module_dir.is_dir():
@@ -697,6 +942,9 @@ def generate_brainboard_tf() -> tuple[Path, bool]:
             continue
 
         var_map = {name: f"{module_name}__{name}" for name in var_names}
+        module_resource_maps[module_name] = dict(res_map)
+        module_data_maps[module_name] = dict(data_map)
+        module_var_maps[module_name] = dict(var_map)
 
         out_lines.append(f"# ---- Module: {module_name} ----")
         _append_module_var_stubs(out_lines, module_name, var_map)
@@ -730,6 +978,18 @@ def generate_brainboard_tf() -> tuple[Path, bool]:
             out_lines.append("")
 
     new_text = "\n".join(out_lines).rstrip() + "\n"
+    root_module_inputs = _collect_root_module_inputs(ROOT_MAIN_TF)
+    module_output_values = _collect_module_output_values(MODULES_DIR)
+    new_text, rewired_refs = _apply_root_module_wiring(
+        new_text,
+        root_module_inputs,
+        module_resource_maps,
+        module_data_maps,
+        module_var_maps,
+        module_output_values,
+    )
+    if rewired_refs:
+        _log(f"Root wiring pass rewired {rewired_refs} module input reference(s).")
     old_text = OUT_FILE.read_text(encoding="utf-8") if OUT_FILE.exists() else None
 
     if old_text != new_text:
