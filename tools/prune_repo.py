@@ -31,7 +31,7 @@ KEEP_NAMES = {
     "NOTES.md",
     "brainboard-export",
     ".vscode",
-    "aws-architecture-diagram"
+    "aws-architecture-diagram.png",
 }
 
 def _handle_remove_readonly(func, path, exc_info):
