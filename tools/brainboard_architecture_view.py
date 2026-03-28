@@ -295,6 +295,63 @@ def _ensure_variable_block(text: str, variable_name: str, block_text: str):
     return text.rstrip() + "\n\n" + block_text.strip() + "\n"
 
 
+def _strip_route53_multivalue_flags_for_architecture_import(text: str):
+    non_multivalue_policy_re = re.compile(
+        r"(?m)^\s*(cidr_routing_policy|failover_routing_policy|geolocation_routing_policy|geoproximity_routing_policy|latency_routing_policy|weighted_routing_policy)\b"
+    )
+    blocks = _collect_blocks(text)
+    for block in reversed(blocks):
+        if block.kind != "resource" or block.type_name != "aws_route53_record":
+            continue
+
+        if non_multivalue_policy_re.search(block.text):
+            # Keep explicit routing-policy records intact (they require set_identifier).
+            continue
+
+        new_block_text = re.sub(r"(?m)^\s*set_identifier\s*=.*\n", "", block.text)
+        new_block_text = re.sub(
+            r"(?m)^\s*multivalue_answer_routing_policy\s*=.*\n", "", new_block_text
+        )
+        if new_block_text == block.text:
+            continue
+
+        text = text[: block.start] + new_block_text + text[block.end :]
+    return text
+
+
+def _normalize_route_table_association_for_each(text: str):
+    blocks = _collect_blocks(text)
+    for block in reversed(blocks):
+        if block.kind != "resource" or block.type_name != "aws_route_table_association":
+            continue
+
+        match = re.search(
+            r"(?m)^(\s*)for_each\s*=\s*(aws_subnet\.[A-Za-z0-9_]+)\s*$", block.text
+        )
+        if not match:
+            continue
+
+        indent = match.group(1)
+        subnet_ref = match.group(2)
+        replacement = (
+            f"{indent}for_each = {{ for k, subnet in {subnet_ref} : k => subnet.id }}"
+        )
+        new_block_text = (
+            block.text[: match.start()] + replacement + block.text[match.end() :]
+        )
+        new_block_text = re.sub(
+            r"(?m)^(\s*subnet_id\s*=\s*)each\.value\.id\s*$",
+            r"\1each.value",
+            new_block_text,
+        )
+
+        if new_block_text == block.text:
+            continue
+
+        text = text[: block.start] + new_block_text + text[block.end :]
+    return text
+
+
 def _apply_brainboard_compatibility_patches(text: str, removed_resources):
     # Brainboard architecture preflight may not model these dependency resources
     # as architecture nodes. Route those links via explicit variables so import
@@ -389,11 +446,14 @@ variable "rds__kms_key_arn" {
             fallback_var_name, fallback_block = fallback_var
             fallback_vars_to_add[fallback_var_name] = fallback_block
 
-    # Brainboard currently mis-validates multivalue Route53 records that include
-    # a set_identifier as if latency routing were also present. For architecture
-    # import, keep records as simple alias A records without routing policy flags.
-    text = re.sub(r"(?m)^\s*set_identifier\s*=.*\n", "", text)
-    text = re.sub(r"(?m)^\s*multivalue_answer_routing_policy\s*=.*\n", "", text)
+    # For architecture import, keep simple alias Route53 records free of
+    # multivalue/set_identifier flags while preserving explicit routing-policy
+    # records (latency/weighted/etc.) that require set_identifier.
+    text = _strip_route53_multivalue_flags_for_architecture_import(text)
+
+    # Brainboard may flag for_each references that point at whole subnet objects.
+    # Rewrite to an id-map expression without changing association behavior.
+    text = _normalize_route_table_association_for_each(text)
 
     for variable_name in sorted(fallback_vars_to_add):
         text = _ensure_variable_block(text, variable_name, fallback_vars_to_add[variable_name])

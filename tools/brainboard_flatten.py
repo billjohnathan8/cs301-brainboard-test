@@ -616,10 +616,24 @@ def _normalize_kms_rotation_period(block_text: str) -> str:
 
 
 def _normalize_route53_set_identifier(block_text: str) -> str:
-    has_set_identifier = re.search(r"(?m)^\s*set_identifier\s*=", block_text) is not None
-    has_multivalue_routing = re.search(r"(?m)^\s*multivalue_answer_routing_policy\s*=", block_text) is not None
+    non_multivalue_policy_re = re.compile(
+        r"(?m)^\s*(cidr_routing_policy|failover_routing_policy|geolocation_routing_policy|geoproximity_routing_policy|latency_routing_policy|weighted_routing_policy)\b"
+    )
+    set_identifier_re = re.compile(r"(?m)^\s*set_identifier\s*=")
+    multivalue_re = re.compile(r"(?m)^\s*multivalue_answer_routing_policy\s*=")
 
-    if has_set_identifier and has_multivalue_routing:
+    has_non_multivalue_policy = non_multivalue_policy_re.search(block_text) is not None
+    has_set_identifier = set_identifier_re.search(block_text) is not None
+    has_multivalue_routing = multivalue_re.search(block_text) is not None
+
+    # Multivalue cannot be combined with other routing policies. If Brainboard
+    # emitted both, keep the explicit policy and drop multivalue.
+    if has_non_multivalue_policy and has_multivalue_routing:
+        block_text = re.sub(r"(?m)^\s*multivalue_answer_routing_policy\s*=.*\n", "", block_text)
+        has_multivalue_routing = False
+
+    # If a non-multivalue routing policy already has set_identifier, keep as-is.
+    if has_non_multivalue_policy and has_set_identifier:
         return block_text
 
     header_match = re.search(
@@ -657,10 +671,18 @@ def _normalize_route53_set_identifier(block_text: str) -> str:
             insert_idx = idx + 1
             break
 
+    should_add_multivalue = (not has_non_multivalue_policy) and (not has_multivalue_routing)
+    should_add_set_identifier = (not has_set_identifier) and (
+        has_non_multivalue_policy or has_multivalue_routing or should_add_multivalue
+    )
+
+    if not should_add_set_identifier and not should_add_multivalue:
+        return block_text
+
     lines_to_insert = []
-    if not has_set_identifier and set_identifier_expr is not None:
+    if should_add_set_identifier and set_identifier_expr is not None:
         lines_to_insert.append(f"{indent}set_identifier = {set_identifier_expr}")
-    if not has_multivalue_routing:
+    if should_add_multivalue:
         lines_to_insert.append(f"{indent}multivalue_answer_routing_policy = true")
 
     for offset, line in enumerate(lines_to_insert):
