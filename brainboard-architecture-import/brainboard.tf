@@ -6,13 +6,13 @@
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
-    aws    = { source = "hashicorp/aws", version = "~> 5.0" }
+    aws = { source = "hashicorp/aws", version = "~> 5.0" }
     random = { source = "hashicorp/random", version = "~> 3.0" }
   }
 }
 
 provider "aws" {
-  region                      = "ap-southeast-1"
+  region = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -20,8 +20,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias                       = "us_east_1"
-  region                      = "us-east-1"
+  alias  = "us_east_1"
+  region = "us-east-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -29,8 +29,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias                       = "ap_southeast_1"
-  region                      = "ap-southeast-1"
+  alias  = "ap_southeast_1"
+  region = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -2590,9 +2590,8 @@ resource "aws_route_table" "network__db" {
 
 # Source: modules/network/route_tables.tf
 resource "aws_route_table_association" "network__public" {
-  for_each = aws_subnet.network__public
-
-  subnet_id      = each.value.id
+  for_each = { for k, subnet in aws_subnet.network__public : k => subnet.id }
+  subnet_id      = each.value
   route_table_id = aws_route_table.network__public.id
 }
 
@@ -2614,9 +2613,8 @@ resource "aws_route_table_association" "network__private_per_az" {
 
 # Source: modules/network/route_tables.tf
 resource "aws_route_table_association" "network__db" {
-  for_each = aws_subnet.network__db
-
-  subnet_id      = each.value.id
+  for_each = { for k, subnet in aws_subnet.network__db : k => subnet.id }
+  subnet_id      = each.value
   route_table_id = aws_route_table.network__db[0].id
 }
 
