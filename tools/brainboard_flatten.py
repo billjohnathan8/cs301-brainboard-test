@@ -397,6 +397,13 @@ def _expand_module_output_refs(
     return expanded
 
 
+def _has_unsupported_resource_reference(expr: str) -> bool:
+    for resource_type in UNSUPPORTED_BRAINBOARD_RESOURCE_TYPES:
+        if re.search(rf"\b{re.escape(resource_type)}\.[A-Za-z_][A-Za-z0-9_]*\b", expr):
+            return True
+    return False
+
+
 def _apply_root_module_wiring(
     text: str,
     root_module_inputs,
@@ -432,6 +439,8 @@ def _apply_root_module_wiring(
             if not resolved_expr or "module." in resolved_expr:
                 continue
             if re.search(r"\bvar\.(?![A-Za-z_][A-Za-z0-9_]*__)", resolved_expr):
+                continue
+            if _has_unsupported_resource_reference(resolved_expr):
                 continue
 
             pattern = re.compile(rf"\bvar\.{re.escape(flat_var_name)}\b")
