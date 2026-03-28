@@ -296,7 +296,7 @@ def _ensure_variable_block(text: str, variable_name: str, block_text: str):
 
 
 def _strip_route53_multivalue_flags_for_architecture_import(text: str):
-    non_multivalue_policy_re = re.compile(
+    routing_policy_re = re.compile(
         r"(?m)^\s*(cidr_routing_policy|failover_routing_policy|geolocation_routing_policy|geoproximity_routing_policy|latency_routing_policy|weighted_routing_policy)\b"
     )
     blocks = _collect_blocks(text)
@@ -304,14 +304,53 @@ def _strip_route53_multivalue_flags_for_architecture_import(text: str):
         if block.kind != "resource" or block.type_name != "aws_route53_record":
             continue
 
-        if non_multivalue_policy_re.search(block.text):
-            # Keep explicit routing-policy records intact (they require set_identifier).
-            continue
-
-        new_block_text = re.sub(r"(?m)^\s*set_identifier\s*=.*\n", "", block.text)
-        new_block_text = re.sub(
-            r"(?m)^\s*multivalue_answer_routing_policy\s*=.*\n", "", new_block_text
+        has_routing_policy = routing_policy_re.search(block.text) is not None
+        has_set_identifier = (
+            re.search(r"(?m)^\s*set_identifier\s*=", block.text) is not None
         )
+        has_multivalue = (
+            re.search(r"(?m)^\s*multivalue_answer_routing_policy\s*=", block.text)
+            is not None
+        )
+
+        new_block_text = block.text
+
+        # Brainboard often treats multivalue flags inconsistently for architecture
+        # imports, so strip it from generated architecture files.
+        if has_multivalue:
+            new_block_text = re.sub(
+                r"(?m)^\s*multivalue_answer_routing_policy\s*=.*\n",
+                "",
+                new_block_text,
+            )
+
+        # If any routing policy exists, guarantee set_identifier to satisfy
+        # provider validation even when Brainboard injects latency policy.
+        if has_routing_policy and not has_set_identifier:
+            indent_match = re.search(
+                r'(?m)^(\s*)resource\s+"aws_route53_record"\s+"[^"]+"\s*{',
+                new_block_text,
+            )
+            if not indent_match:
+                continue
+
+            indent = indent_match.group(1) + "  "
+            if re.search(r"(?m)^\s*for_each\s*=", new_block_text):
+                set_identifier_expr = f'try(tostring(each.key), "{block.name}")'
+            elif re.search(r"(?m)^\s*count\s*=", new_block_text):
+                set_identifier_expr = f'"{block.name}-${{count.index}}"'
+            else:
+                set_identifier_expr = f'"{block.name}"'
+
+            lines = new_block_text.rstrip().splitlines()
+            insert_idx = len(lines) - 1
+            for idx, line in enumerate(lines):
+                if re.match(r"^\s*type\s*=", line):
+                    insert_idx = idx + 1
+                    break
+            lines.insert(insert_idx, f"{indent}set_identifier = {set_identifier_expr}")
+            new_block_text = "\n".join(lines)
+
         if new_block_text == block.text:
             continue
 
