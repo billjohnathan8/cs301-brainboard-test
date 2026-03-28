@@ -254,6 +254,8 @@ resource "aws_route53_record" "alb__alb" {
   name    = var.alb__alb_subdomain
   type    = "A"
 
+  set_identifier = "alb__alb-${count.index}"
+
   alias {
     name                   = aws_lb.alb__crm.dns_name
     zone_id                = aws_lb.alb__crm.zone_id
@@ -752,6 +754,8 @@ resource "aws_route53_record" "cloudfront__cloudfront" {
   zone_id = var.cloudfront__route53_zone_id
   name    = var.cloudfront__app_domain_name
   type    = "A"
+
+  set_identifier = "cloudfront__cloudfront-${count.index}"
 
   alias {
     name                   = aws_cloudfront_distribution.cloudfront__frontend.domain_name
