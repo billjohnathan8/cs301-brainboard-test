@@ -400,6 +400,17 @@ def _normalize_route_table_association_for_each(text: str):
     return text
 
 
+def _drop_route53_records_for_architecture_import(text: str):
+    # Brainboard architecture import currently mutates Route53 record routing
+    # fields (notably latency policy/set_identifier), causing validate failures.
+    # Keep DNS records in full import, but drop them from architecture view.
+    blocks = _collect_blocks(text)
+    for block in reversed(blocks):
+        if block.kind == "resource" and block.type_name == "aws_route53_record":
+            text = text[: block.start] + text[block.end :]
+    return re.sub(r"\n{3,}", "\n\n", text).rstrip() + "\n"
+
+
 def _apply_brainboard_compatibility_patches(text: str, removed_resources):
     # Brainboard architecture preflight may not model these dependency resources
     # as architecture nodes. Route those links via explicit variables so import
@@ -498,6 +509,10 @@ variable "rds__kms_key_arn" {
     # multivalue/set_identifier flags while preserving explicit routing-policy
     # records (latency/weighted/etc.) that require set_identifier.
     text = _strip_route53_multivalue_flags_for_architecture_import(text)
+
+    # Brainboard architecture validate is currently unstable for Route53 records.
+    # Use a DNS-node-free architecture artifact to keep import/validate reliable.
+    text = _drop_route53_records_for_architecture_import(text)
 
     # Brainboard may flag for_each references that point at whole subnet objects.
     # Rewrite to an id-map expression without changing association behavior.
