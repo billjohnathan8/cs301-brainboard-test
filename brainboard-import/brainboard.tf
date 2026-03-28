@@ -6,13 +6,13 @@
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
-    aws = { source = "hashicorp/aws", version = "~> 5.0" }
+    aws    = { source = "hashicorp/aws", version = "~> 5.0" }
     random = { source = "hashicorp/random", version = "~> 3.0" }
   }
 }
 
 provider "aws" {
-  region = "ap-southeast-1"
+  region                      = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -20,8 +20,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias  = "us_east_1"
-  region = "us-east-1"
+  alias                       = "us_east_1"
+  region                      = "us-east-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -29,8 +29,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias  = "ap_southeast_1"
-  region = "ap-southeast-1"
+  alias                       = "ap_southeast_1"
+  region                      = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -670,7 +670,7 @@ resource "aws_cloudfront_distribution" "cloudfront__frontend" {
   default_root_object = "index.html"
   price_class         = var.cloudfront__cloudfront_price_class
   aliases             = var.cloudfront__use_custom_domain ? [var.cloudfront__app_domain_name] : []
-  web_acl_id          = ((var.waf__enable_waf ? aws_wafv2_web_acl.waf__frontend[0].arn : null))
+  web_acl_id          = var.cloudfront__waf_arn
 
   origin {
     domain_name              = ((aws_s3_bucket.s3__frontend.bucket_regional_domain_name))
@@ -3788,7 +3788,7 @@ resource "aws_cloudwatch_dashboard" "observability__main" {
           height = 6
           properties = {
             title   = "ALB Healthy Host Count"
-            metrics = [for svc, suffix in (({ for service, tg in aws_lb_target_group.alb__service : service => tg.arn_suffix })) : ["AWS/ApplicationELB", "HealthyHostCount", "TargetGroup", suffix, "LoadBalancer", ((aws_lb.alb__crm.arn_suffix)), { label = svc }]]
+            metrics = [for svc, suffix in(({ for service, tg in aws_lb_target_group.alb__service : service => tg.arn_suffix })) : ["AWS/ApplicationELB", "HealthyHostCount", "TargetGroup", suffix, "LoadBalancer", ((aws_lb.alb__crm.arn_suffix)), { label = svc }]]
             period  = 60
             stat    = "Average"
             region  = var.observability__aws_region
@@ -3803,7 +3803,7 @@ resource "aws_cloudwatch_dashboard" "observability__main" {
           height = 6
           properties = {
             title   = "ALB Unhealthy Host Count"
-            metrics = [for svc, suffix in (({ for service, tg in aws_lb_target_group.alb__service : service => tg.arn_suffix })) : ["AWS/ApplicationELB", "UnHealthyHostCount", "TargetGroup", suffix, "LoadBalancer", ((aws_lb.alb__crm.arn_suffix)), { label = svc }]]
+            metrics = [for svc, suffix in(({ for service, tg in aws_lb_target_group.alb__service : service => tg.arn_suffix })) : ["AWS/ApplicationELB", "UnHealthyHostCount", "TargetGroup", suffix, "LoadBalancer", ((aws_lb.alb__crm.arn_suffix)), { label = svc }]]
             period  = 60
             stat    = "Average"
             region  = var.observability__aws_region
