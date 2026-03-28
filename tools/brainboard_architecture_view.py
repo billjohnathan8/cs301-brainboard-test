@@ -351,6 +351,15 @@ def _strip_route53_multivalue_flags_for_architecture_import(text: str):
             lines.insert(insert_idx, f"{indent}set_identifier = {set_identifier_expr}")
             new_block_text = "\n".join(lines)
 
+        # Brainboard may drop dynamic expressions like `${count.index}` during
+        # architecture import. Keep a static identifier so downstream validate
+        # still has set_identifier when latency policy appears.
+        new_block_text = re.sub(
+            r"(?m)^(\s*)set_identifier\s*=.*$",
+            rf'\1set_identifier = "{block.name}"',
+            new_block_text,
+        )
+
         if new_block_text == block.text:
             continue
 
