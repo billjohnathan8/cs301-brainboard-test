@@ -302,6 +302,12 @@ def _apply_brainboard_compatibility_patches(text: str):
     for old, new in replacements.items():
         text = text.replace(old, new)
 
+    # Brainboard currently mis-validates multivalue Route53 records that include
+    # a set_identifier as if latency routing were also present. For architecture
+    # import, keep records as simple alias A records without routing policy flags.
+    text = re.sub(r"(?m)^\s*set_identifier\s*=.*\n", "", text)
+    text = re.sub(r"(?m)^\s*multivalue_answer_routing_policy\s*=.*\n", "", text)
+
     text = _ensure_variable_block(
         text,
         "ecs__task_definition_arns",
