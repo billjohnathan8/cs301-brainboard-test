@@ -6,13 +6,13 @@
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
-    aws    = { source = "hashicorp/aws", version = "~> 5.0" }
+    aws = { source = "hashicorp/aws", version = "~> 5.0" }
     random = { source = "hashicorp/random", version = "~> 3.0" }
   }
 }
 
 provider "aws" {
-  region                      = "ap-southeast-1"
+  region = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -20,8 +20,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias                       = "us_east_1"
-  region                      = "us-east-1"
+  alias  = "us_east_1"
+  region = "us-east-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -29,8 +29,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias                       = "ap_southeast_1"
-  region                      = "ap-southeast-1"
+  alias  = "ap_southeast_1"
+  region = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -122,23 +122,128 @@ resource "aws_lb" "alb__crm" {
   name                       = substr("${var.alb__name_prefix}-alb", 0, 32)
   internal                   = false
   load_balancer_type         = "application"
-  security_groups            = [var.alb__alb_security_group_id]
-  subnets                    = var.alb__public_subnet_ids
+  security_groups            = [((aws_security_group.security__alb.id))]
+  subnets                    = (([for idx in sort(keys(local.public_subnet_map)) : aws_subnet.network__public[idx].id]))
   preserve_host_header       = true
   drop_invalid_header_fields = true
 }
 
 # Source: modules/alb/main.tf
 
-# Source: modules/alb/main.tf
+resource "aws_lb_target_group" "alb__service" {
+  for_each = local.service_routing
+
+  name        = trim(substr("${var.alb__name_prefix}-${each.key}-tg", 0, 32), "-")
+  port        = 8080
+  protocol    = "HTTP"
+  target_type = "ip"
+  vpc_id      = ((aws_vpc.network__this.id))
+
+  health_check {
+    path                = var.alb__service_health_check_path
+    matcher             = "200"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+  }
+}
 
 # Source: modules/alb/main.tf
 
-# Source: modules/alb/main.tf
+resource "aws_lb_target_group" "alb__service_green" {
+  for_each = var.alb__enable_blue_green_tg ? local.service_routing : {}
+
+  name        = trim(substr("${var.alb__name_prefix}-${each.key}-tg-green", 0, 32), "-")
+  port        = 8080
+  protocol    = "HTTP"
+  target_type = "ip"
+  vpc_id      = ((aws_vpc.network__this.id))
+
+  health_check {
+    path                = var.alb__service_health_check_path
+    matcher             = "200"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+  }
+}
 
 # Source: modules/alb/main.tf
 
+resource "aws_lb_listener" "alb__http" {
+  load_balancer_arn = aws_lb.alb__crm.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type = "fixed-response"
+    fixed_response {
+      content_type = "application/json"
+      message_body = "{\"message\":\"Not Found\"}"
+      status_code  = "404"
+    }
+  }
+}
+
 # Source: modules/alb/main.tf
+
+resource "aws_lb_listener" "alb__https" {
+  count = var.alb__use_custom_domain ? 1 : 0
+
+  load_balancer_arn = aws_lb.alb__crm.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = var.alb__alb_certificate_arn
+
+  default_action {
+    type = "fixed-response"
+    fixed_response {
+      content_type = "application/json"
+      message_body = "{\"message\":\"Not Found\"}"
+      status_code  = "404"
+    }
+  }
+}
+
+# Source: modules/alb/main.tf
+resource "aws_lb_listener_rule" "alb__client_transactions" {
+  listener_arn = var.alb__use_custom_domain ? aws_lb_listener.alb__https[0].arn : aws_lb_listener.alb__http.arn
+  priority     = 15
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.alb__service["transaction"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/clients/*/transactions*"]
+    }
+  }
+}
+
+# Source: modules/alb/main.tf
+
+resource "aws_lb_listener_rule" "alb__service" {
+  for_each = local.service_routing
+
+  listener_arn = var.alb__use_custom_domain ? aws_lb_listener.alb__https[0].arn : aws_lb_listener.alb__http.arn
+  priority     = each.value.priority
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.alb__service[each.key].arn
+  }
+
+  condition {
+    path_pattern {
+      values = each.value.path_patterns
+    }
+  }
+}
 
 # Source: modules/alb/route53.tf
 
@@ -247,13 +352,61 @@ resource "aws_apigatewayv2_api" "apigateway__log" {
 
 # Source: modules/apigateway/main.tf
 
-# Source: modules/apigateway/main.tf
+resource "aws_apigatewayv2_integration" "apigateway__log_lambda" {
+  api_id                 = aws_apigatewayv2_api.apigateway__log.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = ((var.lambda__enable_log_lambda ? aws_lambda_function.lambda__log[0].invoke_arn : ""))
+  payload_format_version = "2.0"
+  timeout_milliseconds   = 29000
+}
 
 # Source: modules/apigateway/main.tf
 
-# Source: modules/apigateway/main.tf
+resource "aws_apigatewayv2_route" "apigateway__log" {
+  for_each = local.log_api_route_keys
+
+  api_id    = aws_apigatewayv2_api.apigateway__log.id
+  route_key = each.value
+  target    = "integrations/${aws_apigatewayv2_integration.apigateway__log_lambda.id}"
+}
 
 # Source: modules/apigateway/main.tf
+
+resource "aws_cloudwatch_log_group" "apigateway__api_gateway" {
+  name              = "/aws/apigateway/${var.apigateway__name_prefix}-log-http-api"
+  retention_in_days = var.apigateway__cloudwatch_log_retention_days
+}
+
+# Source: modules/apigateway/main.tf
+
+resource "aws_apigatewayv2_stage" "apigateway__log_default" {
+  api_id      = aws_apigatewayv2_api.apigateway__log.id
+  name        = "$default"
+  auto_deploy = true
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.apigateway__api_gateway.arn
+    format = jsonencode({
+      requestId        = "$context.requestId"
+      sourceIp         = "$context.identity.sourceIp"
+      requestTime      = "$context.requestTime"
+      routeKey         = "$context.routeKey"
+      status           = "$context.status"
+      responseLength   = "$context.responseLength"
+      integrationError = "$context.integrationErrorMessage"
+    })
+  }
+}
+
+# Source: modules/apigateway/main.tf
+
+resource "aws_lambda_permission" "apigateway__allow_api_gateway_invoke_log" {
+  statement_id  = "AllowExecutionFromHttpApi"
+  action        = "lambda:InvokeFunction"
+  function_name = ((var.lambda__enable_log_lambda ? aws_lambda_function.lambda__log[0].function_name : ""))
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.apigateway__log.execution_arn}/*/*"
+}
 
 # Source: modules/apigateway/main.tf
 
@@ -456,10 +609,10 @@ resource "aws_cloudfront_distribution" "cloudfront__frontend" {
   default_root_object = "index.html"
   price_class         = var.cloudfront__cloudfront_price_class
   aliases             = var.cloudfront__use_custom_domain ? [var.cloudfront__app_domain_name] : []
-  web_acl_id          = var.cloudfront__waf_arn
+  web_acl_id          = ((var.waf__enable_waf ? aws_wafv2_web_acl.waf__frontend[0].arn : null))
 
   origin {
-    domain_name              = var.cloudfront__frontend_bucket_regional_domain_name
+    domain_name              = ((aws_s3_bucket.s3__frontend.bucket_regional_domain_name))
     origin_id                = "frontend-s3"
     origin_access_control_id = var.cloudfront__enable_cloudfront_oac ? aws_cloudfront_origin_access_control.cloudfront__frontend[0].id : null
 
@@ -469,7 +622,7 @@ resource "aws_cloudfront_distribution" "cloudfront__frontend" {
   }
 
   origin {
-    domain_name = var.cloudfront__use_custom_domain ? var.cloudfront__alb_origin_domain_name : var.cloudfront__alb_dns_name
+    domain_name = var.cloudfront__use_custom_domain ? var.cloudfront__alb_origin_domain_name : ((aws_lb.alb__crm.dns_name))
     origin_id   = "backend-alb"
 
     custom_origin_config {
@@ -569,7 +722,7 @@ locals {
       }
       Action = ["s3:GetObject"]
       Resource = [
-        "${var.cloudfront__frontend_bucket_arn}/*",
+        "${((aws_s3_bucket.s3__frontend.arn))}/*",
       ]
     },
     var.cloudfront__enable_cloudfront_oac ? {
@@ -1286,13 +1439,13 @@ resource "aws_ecs_task_definition" "ecs__service" {
   network_mode             = "awsvpc"
   cpu                      = tostring(var.ecs__ecs_task_cpu)
   memory                   = tostring(var.ecs__ecs_task_memory)
-  execution_role_arn       = var.ecs__ecs_task_execution_role_arn
+  execution_role_arn       = ((local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.security__ecs_task_execution[0].arn))
   task_role_arn            = var.ecs__ecs_task_role_arns[each.key]
 
   container_definitions = jsonencode([
     {
       name      = each.key
-      image     = "${var.ecs__ecr_repository_urls[each.key]}:${each.value.image_tag}"
+      image     = "${(({ for service, repo in aws_ecr_repository.ecr__service : service => repo.repository_url }))[each.key]}:${each.value.image_tag}"
       essential = true
 
       portMappings = [
@@ -1335,7 +1488,7 @@ resource "aws_ecs_service" "ecs__service" {
   launch_type = "FARGATE"
   # desired_count already reflects statefulness rules from local.service_configs.
   desired_count                      = each.value.desired_count
-  task_definition                    = lookup(var.ecs__task_definition_arns, each.key, "arn:aws:ecs:${var.ecs__aws_region}:000000000000:task-definition/${var.ecs__name_prefix}-${each.key}:1")
+  task_definition                    = aws_ecs_task_definition.ecs__service[each.key].arn
   health_check_grace_period_seconds  = 60
   deployment_minimum_healthy_percent = var.ecs__use_codedeploy_controller ? null : 50
   deployment_maximum_percent         = var.ecs__use_codedeploy_controller ? null : 200
@@ -1373,13 +1526,13 @@ resource "aws_ecs_service" "ecs__service" {
   # Network configuration for Fargate tasks
   network_configuration {
     subnets          = var.ecs__service_subnet_ids
-    security_groups  = [var.ecs__ecs_service_security_group_id]
+    security_groups  = [((aws_security_group.security__ecs_service.id))]
     assign_public_ip = var.ecs__assign_public_ip
   }
 
   # Load balancer integration
   load_balancer {
-    target_group_arn = var.ecs__target_group_arns[each.key]
+    target_group_arn = (({ for service, target_group in aws_lb_target_group.alb__service : service => target_group.arn }))[each.key]
     container_name   = each.key
     container_port   = 8080
   }
@@ -1441,7 +1594,7 @@ locals {
         },
         {
           name  = "SPRING_DATASOURCE_URL"
-          value = var.ecs__db_jdbc_url
+          value = ((local.db_jdbc_url))
         },
         {
           name  = "APP_USER_STORE_TYPE"
@@ -1471,15 +1624,15 @@ locals {
         },
         {
           name      = "JWT_HMAC_SECRET"
-          valueFrom = var.ecs__jwt_hmac_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
         },
         {
           name      = "SPRING_DATASOURCE_USERNAME"
-          valueFrom = var.ecs__db_username_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__db_username.arn))
         },
         {
           name      = "SPRING_DATASOURCE_PASSWORD"
-          valueFrom = var.ecs__db_password_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__db_password.arn))
         }
       ]
     }
@@ -1489,7 +1642,7 @@ locals {
       environment = [
         {
           name  = "SPRING_DATASOURCE_URL"
-          value = var.ecs__db_jdbc_url
+          value = ((local.db_jdbc_url))
         },
         {
           name  = "CLIENT_LOG_SERVICE_URL"
@@ -1505,11 +1658,11 @@ locals {
         },
         {
           name  = "VERIFICATION_SNS_TOPIC_ARN"
-          value = var.ecs__verification_sns_topic_arn
+          value = ((var.sns__enable_verification_pipeline ? aws_sns_topic.sns__verification[0].arn : ""))
         },
         {
           name  = "VERIFICATION_DOCUMENTS_BUCKET"
-          value = var.ecs__verification_documents_bucket
+          value = ((var.s3__enable_verification_bucket ? aws_s3_bucket.s3__verification[0].id : ""))
         },
         {
           name  = "VERIFICATION_EMAIL_AWS_REGION"
@@ -1535,15 +1688,15 @@ locals {
       secrets = [
         {
           name      = "SPRING_DATASOURCE_USERNAME"
-          valueFrom = var.ecs__db_username_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__db_username.arn))
         },
         {
           name      = "SPRING_DATASOURCE_PASSWORD"
-          valueFrom = var.ecs__db_password_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__db_password.arn))
         },
         {
           name      = "JWT_HMAC_SECRET"
-          valueFrom = var.ecs__jwt_hmac_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
         }
       ]
     }
@@ -1561,7 +1714,7 @@ locals {
         },
         {
           name  = "SPRING_DATASOURCE_URL"
-          value = var.ecs__db_jdbc_url
+          value = ((local.db_jdbc_url))
         },
         {
           name  = "APP_TRANSACTIONS_STORE_TYPE"
@@ -1569,7 +1722,7 @@ locals {
         },
         {
           name  = "TRANSACTION_IMPORT_S3_BUCKET"
-          value = var.ecs__transaction_import_s3_bucket
+          value = ((var.s3__enable_transaction_sftp_bucket ? aws_s3_bucket.s3__transaction_sftp[0].bucket : ""))
         },
         {
           name  = "TRANSACTION_IMPORT_S3_REGION"
@@ -1603,15 +1756,15 @@ locals {
       secrets = [
         {
           name      = "JWT_HMAC_SECRET"
-          valueFrom = var.ecs__jwt_hmac_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
         },
         {
           name      = "SPRING_DATASOURCE_USERNAME"
-          valueFrom = var.ecs__db_username_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__db_username.arn))
         },
         {
           name      = "SPRING_DATASOURCE_PASSWORD"
-          valueFrom = var.ecs__db_password_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__db_password.arn))
         }
       ]
     }
@@ -1627,7 +1780,7 @@ locals {
   # Derived from the resource attribute when discovery is on so that any change
   # to the namespace name propagates automatically rather than silently diverging.
   cloudmap_namespace_name     = var.ecs__enable_service_discovery ? aws_service_discovery_private_dns_namespace.ecs__internal[0].name : "${var.ecs__environment}.${var.ecs__project_name}.internal"
-  client_service_internal_url = var.ecs__enable_service_discovery ? "http://client.${local.cloudmap_namespace_name}:8080" : "http://${var.ecs__alb_dns_name}"
+  client_service_internal_url = var.ecs__enable_service_discovery ? "http://client.${local.cloudmap_namespace_name}:8080" : "http://${((aws_lb.alb__crm.dns_name))}"
 }
 
 # Source: modules/ecs/main.tf
@@ -1645,7 +1798,7 @@ resource "aws_service_discovery_private_dns_namespace" "ecs__internal" {
   count = var.ecs__enable_service_discovery ? 1 : 0
 
   name = "${var.ecs__environment}.${var.ecs__project_name}.internal"
-  vpc  = var.ecs__vpc_id
+  vpc  = ((aws_vpc.network__this.id))
 }
 
 # Source: modules/ecs/service_discovery.tf
@@ -2022,7 +2175,7 @@ resource "aws_lambda_function" "lambda__log" {
   function_name    = "${var.lambda__name_prefix}-log-service"
   filename         = var.lambda__log_lambda_zip_path
   source_code_hash = filebase64sha256(var.lambda__log_lambda_zip_path)
-  role             = var.lambda__log_lambda_role_arn
+  role             = ((local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.security__log_lambda[0].arn))
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.13"
   memory_size      = var.lambda__log_lambda_memory_size
@@ -2030,18 +2183,18 @@ resource "aws_lambda_function" "lambda__log" {
   publish          = true
 
   vpc_config {
-    subnet_ids         = var.lambda__private_subnet_ids
-    security_group_ids = [var.lambda__lambda_security_group_id]
+    subnet_ids         = (([for idx in sort(keys(local.private_subnet_map)) : aws_subnet.network__private[idx].id]))
+    security_group_ids = [((aws_security_group.security__lambda.id))]
   }
 
   environment {
     variables = {
-      DB_HOST                = var.lambda__db_host
+      DB_HOST                = ((aws_db_instance.rds__postgres.address))
       DB_PORT                = tostring(var.lambda__db_port)
       DB_NAME                = var.lambda__db_name
-      DB_USER_SECRET_ARN     = var.lambda__db_username_secret_arn
-      DB_PASSWORD_SECRET_ARN = var.lambda__db_password_secret_arn
-      JWT_HMAC_SECRET_ARN    = var.lambda__jwt_hmac_secret_arn
+      DB_USER_SECRET_ARN     = ((aws_secretsmanager_secret.security__db_username.arn))
+      DB_PASSWORD_SECRET_ARN = ((aws_secretsmanager_secret.security__db_password.arn))
+      JWT_HMAC_SECRET_ARN    = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
       AUTH_MODE              = var.lambda__auth_mode
       COGNITO_ISSUER         = var.lambda__cognito_issuer_url
       COGNITO_JWKS_URL       = var.lambda__cognito_jwks_url
@@ -2069,7 +2222,7 @@ resource "aws_lambda_function" "lambda__aml" {
   function_name    = "${var.lambda__name_prefix}-aml"
   filename         = var.lambda__aml_lambda_zip_path
   source_code_hash = filebase64sha256(var.lambda__aml_lambda_zip_path)
-  role             = var.lambda__aml_lambda_role_arn
+  role             = ((local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.security__aml_lambda[0].arn))
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.13"
   memory_size      = var.lambda__aml_lambda_memory_size
@@ -2085,8 +2238,8 @@ resource "aws_lambda_function" "lambda__aml" {
       SFTP_REMOTE_PATH            = var.lambda__aml_sftp_remote_path
       CRM_API_BASE_URL            = var.lambda__crm_api_base_url
       CRM_LOG_API_URL_PARAM       = "/${var.lambda__project_name}/${var.lambda__environment}/service/log/url"
-      CRM_API_JWT_HMAC_SECRET_ARN = var.lambda__jwt_hmac_secret_arn
-      JWT_HMAC_SECRET_ARN         = var.lambda__jwt_hmac_secret_arn
+      CRM_API_JWT_HMAC_SECRET_ARN = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
+      JWT_HMAC_SECRET_ARN         = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
       ENTITY_ID                   = var.lambda__aml_entity_id
     }
   }
@@ -2096,9 +2249,28 @@ resource "aws_lambda_function" "lambda__aml" {
 
 # Source: modules/lambda/main.tf
 
+resource "aws_cloudwatch_event_rule" "lambda__aml_schedule" {
+  count = var.lambda__enable_aml_lambda ? 1 : 0
+
+  name                = "${var.lambda__name_prefix}-aml-schedule"
+  description         = "Schedule for AML Lambda batch processing."
+  schedule_expression = var.lambda__aml_schedule_expression
+  state               = "ENABLED"
+}
+
 # Source: modules/lambda/main.tf
 
 # Source: modules/lambda/main.tf
+
+resource "aws_lambda_permission" "lambda__allow_eventbridge_invoke_aml" {
+  count = var.lambda__enable_aml_lambda ? 1 : 0
+
+  statement_id  = "AllowExecutionFromEventBridge"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.lambda__aml[0].function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.lambda__aml_schedule[0].arn
+}
 
 # Source: modules/lambda/main.tf
 
@@ -2117,7 +2289,7 @@ resource "aws_lambda_function" "lambda__sftp_transaction_collector" {
   function_name    = "${var.lambda__name_prefix}-sftp-transaction-collector"
   filename         = var.lambda__sftp_transaction_collector_zip_path
   source_code_hash = filebase64sha256(var.lambda__sftp_transaction_collector_zip_path)
-  role             = var.lambda__sftp_transaction_collector_role_arn
+  role             = ((var.security__enable_sftp_transaction_collector ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.security__sftp_transaction_collector[0].arn) : ""))
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.13"
   memory_size      = var.lambda__sftp_transaction_collector_memory_size
@@ -2127,11 +2299,11 @@ resource "aws_lambda_function" "lambda__sftp_transaction_collector" {
   environment {
     variables = {
       # Legacy naming retained for compatibility; bucket/prefix are S3-backed mock ingestion inputs.
-      TRANSACTION_SFTP_BUCKET                = var.lambda__transaction_sftp_bucket_id
+      TRANSACTION_SFTP_BUCKET                = ((var.s3__enable_transaction_sftp_bucket ? aws_s3_bucket.s3__transaction_sftp[0].id : ""))
       TRANSACTION_SFTP_PREFIX                = var.lambda__transaction_sftp_remote_prefix
       TRANSACTION_IMPORT_URL                 = var.lambda__transaction_import_api_url
-      TRANSACTION_IMPORT_JWT_HMAC_SECRET_ARN = var.lambda__jwt_hmac_secret_arn
-      JWT_HMAC_SECRET_ARN                    = var.lambda__jwt_hmac_secret_arn
+      TRANSACTION_IMPORT_JWT_HMAC_SECRET_ARN = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
+      JWT_HMAC_SECRET_ARN                    = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
     }
   }
 
@@ -2140,9 +2312,28 @@ resource "aws_lambda_function" "lambda__sftp_transaction_collector" {
 
 # Source: modules/lambda/main.tf
 
+resource "aws_cloudwatch_event_rule" "lambda__sftp_transaction_collector_schedule" {
+  count = var.lambda__enable_sftp_transaction_collector ? 1 : 0
+
+  name                = "${var.lambda__name_prefix}-sftp-transaction-collector-schedule"
+  description         = "Schedule for sftp-transaction-collector Lambda."
+  schedule_expression = var.lambda__sftp_transaction_collector_schedule_expression
+  state               = "ENABLED"
+}
+
 # Source: modules/lambda/main.tf
 
 # Source: modules/lambda/main.tf
+
+resource "aws_lambda_permission" "lambda__allow_eventbridge_invoke_sftp_transaction_collector" {
+  count = var.lambda__enable_sftp_transaction_collector ? 1 : 0
+
+  statement_id  = "AllowExecutionFromEventBridgeTransactionIngestion"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.lambda__sftp_transaction_collector[0].function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.lambda__sftp_transaction_collector_schedule[0].arn
+}
 
 # Source: modules/lambda/main.tf
 
@@ -2161,7 +2352,7 @@ resource "aws_lambda_function" "lambda__audit_consumer" {
   function_name    = "${var.lambda__name_prefix}-audit-consumer"
   filename         = var.lambda__audit_consumer_zip_path
   source_code_hash = filebase64sha256(var.lambda__audit_consumer_zip_path)
-  role             = var.lambda__audit_consumer_role_arn
+  role             = ((var.security__enable_audit_pipeline ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.security__audit_consumer_lambda[0].arn) : ""))
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.13"
   memory_size      = var.lambda__audit_consumer_memory_size
@@ -2169,7 +2360,7 @@ resource "aws_lambda_function" "lambda__audit_consumer" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE_NAME = var.lambda__audit_dynamodb_table_name
+      DYNAMODB_TABLE_NAME = ((var.dynamodb__enable_audit_table ? aws_dynamodb_table.dynamodb__audit_logs[0].name : ""))
     }
   }
 
@@ -2195,7 +2386,7 @@ resource "aws_lambda_function" "lambda__aml_consumer" {
   function_name    = "${var.lambda__name_prefix}-aml-consumer"
   filename         = var.lambda__aml_consumer_zip_path
   source_code_hash = filebase64sha256(var.lambda__aml_consumer_zip_path)
-  role             = var.lambda__aml_consumer_role_arn
+  role             = ((var.security__enable_aml_pipeline ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.security__aml_consumer_lambda[0].arn) : ""))
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.13"
   memory_size      = var.lambda__aml_consumer_memory_size
@@ -2203,7 +2394,7 @@ resource "aws_lambda_function" "lambda__aml_consumer" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE_NAME = var.lambda__aml_dynamodb_table_name
+      DYNAMODB_TABLE_NAME = ((var.dynamodb__enable_aml_table ? aws_dynamodb_table.dynamodb__aml_reports[0].name : ""))
     }
   }
 
@@ -2229,7 +2420,7 @@ resource "aws_lambda_function" "lambda__verification" {
   function_name    = "${var.lambda__name_prefix}-verification"
   filename         = var.lambda__verification_zip_path
   source_code_hash = filebase64sha256(var.lambda__verification_zip_path)
-  role             = var.lambda__verification_role_arn
+  role             = ((var.security__enable_verification_pipeline ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.security__verification_lambda[0].arn) : ""))
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.13"
   memory_size      = var.lambda__verification_memory_size
@@ -2241,7 +2432,7 @@ resource "aws_lambda_function" "lambda__verification" {
       SES_SOURCE_EMAIL                 = var.lambda__ses_sender_email
       FRONTEND_BASE_URL                = var.lambda__verification_frontend_base_url
       LOG_API_BASE_URL                 = var.lambda__log_api_base_url
-      VERIFICATION_JWT_HMAC_SECRET_ARN = var.lambda__verification_jwt_hmac_secret_arn
+      VERIFICATION_JWT_HMAC_SECRET_ARN = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
       VERIFICATION_JWT_SUB             = "SYSTEM_VERIFICATION_FEEDBACK"
       VERIFICATION_JWT_ROLE            = "admin"
     }
@@ -2251,6 +2442,16 @@ resource "aws_lambda_function" "lambda__verification" {
 }
 
 # Source: modules/lambda/main.tf
+
+resource "aws_lambda_permission" "lambda__allow_sns_invoke_verification" {
+  count = var.lambda__enable_verification_lambda ? 1 : 0
+
+  statement_id  = "AllowExecutionFromSns"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.lambda__verification[0].function_name
+  principal     = "sns.amazonaws.com"
+  source_arn    = ((var.sns__enable_verification_pipeline ? aws_sns_topic.sns__verification[0].arn : ""))
+}
 
 # Source: modules/lambda/main.tf
 
@@ -2331,20 +2532,93 @@ locals {
 }
 
 # Source: modules/network/route_tables.tf
+resource "aws_route_table" "network__public" {
+  vpc_id = aws_vpc.network__this.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.network__this.id
+  }
+
+  tags = {
+    Name = "${var.network__name_prefix}-public-rt"
+  }
+}
 
 # Source: modules/network/route_tables.tf
+resource "aws_route_table" "network__private" {
+  count = (!var.network__enable_multi_az_nat && var.network__enable_nat_gateway) ? 1 : 0
+
+  vpc_id = aws_vpc.network__this.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.network__this[0].id
+  }
+
+  tags = {
+    Name = "${var.network__name_prefix}-private-rt"
+  }
+}
 
 # Source: modules/network/route_tables.tf
+resource "aws_route_table" "network__private_per_az" {
+  count = (var.network__enable_multi_az_nat && var.network__enable_nat_gateway) ? var.network__az_count : 0
+
+  vpc_id = aws_vpc.network__this.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.network__this[count.index].id
+  }
+
+  tags = {
+    Name = "${var.network__name_prefix}-private-rt-${count.index}"
+  }
+}
 
 # Source: modules/network/route_tables.tf
+resource "aws_route_table" "network__db" {
+  count = length(var.network__db_subnet_cidrs) > 0 ? 1 : 0
+
+  vpc_id = aws_vpc.network__this.id
+
+  tags = {
+    Name = "${var.network__name_prefix}-db-rt"
+  }
+}
 
 # Source: modules/network/route_tables.tf
+resource "aws_route_table_association" "network__public" {
+  for_each = aws_subnet.network__public
+
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.network__public.id
+}
 
 # Source: modules/network/route_tables.tf
+resource "aws_route_table_association" "network__private" {
+  for_each = (!var.network__enable_multi_az_nat && var.network__enable_nat_gateway) ? aws_subnet.network__private : {}
+
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.network__private[0].id
+}
 
 # Source: modules/network/route_tables.tf
+resource "aws_route_table_association" "network__private_per_az" {
+  for_each = (var.network__enable_multi_az_nat && var.network__enable_nat_gateway) ? aws_subnet.network__private : {}
+
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.network__private_per_az[tonumber(each.key)].id
+}
 
 # Source: modules/network/route_tables.tf
+resource "aws_route_table_association" "network__db" {
+  for_each = aws_subnet.network__db
+
+  subnet_id      = each.value.id
+  route_table_id = aws_route_table.network__db[0].id
+}
 
 # Source: modules/network/subnets.tf
 resource "aws_subnet" "network__public" {
@@ -2424,7 +2698,7 @@ resource "aws_eip" "network__nat" {
 resource "aws_nat_gateway" "network__this" {
   count = var.network__enable_nat_gateway ? (var.network__enable_multi_az_nat ? var.network__az_count : 1) : 0
 
-  allocation_id = element(concat(var.network__nat_eip_allocation_ids, ["eipalloc-00000000000000000"]), count.index)
+  allocation_id = aws_eip.network__nat[count.index].id
   subnet_id     = aws_subnet.network__public[tostring(count.index)].id
 
   tags = {
@@ -2854,14 +3128,14 @@ resource "aws_db_instance" "rds__postgres" {
   max_allocated_storage      = var.rds__db_max_allocated_storage
   storage_type               = "gp3"
   storage_encrypted          = true
-  kms_key_id                 = var.rds__kms_key_arn
+  kms_key_id                 = aws_kms_key.rds__rds.arn
   db_name                    = var.rds__db_name
   username                   = var.rds__db_username
-  password                   = var.rds__db_password_value
+  password                   = ((local.db_password_value))
   port                       = var.rds__db_port
-  parameter_group_name       = var.rds__db_parameter_group_name
+  parameter_group_name       = aws_db_parameter_group.rds__postgres.name
   db_subnet_group_name       = aws_db_subnet_group.rds__postgres.name
-  vpc_security_group_ids     = [var.rds__db_security_group_id]
+  vpc_security_group_ids     = [((aws_security_group.security__db.id))]
   backup_retention_period    = var.rds__db_backup_retention_days
   multi_az                   = var.rds__db_multi_az
   skip_final_snapshot        = var.rds__db_skip_final_snapshot
@@ -2872,7 +3146,7 @@ resource "aws_db_instance" "rds__postgres" {
   apply_immediately          = true
 
   performance_insights_enabled          = var.rds__performance_insights_enabled
-  performance_insights_kms_key_id       = var.rds__performance_insights_enabled ? var.rds__kms_key_arn : null
+  performance_insights_kms_key_id       = var.rds__performance_insights_enabled ? aws_kms_key.rds__rds.arn : null
   performance_insights_retention_period = var.rds__performance_insights_enabled ? 7 : null
 
   iam_database_authentication_enabled = var.rds__iam_database_authentication_enabled
@@ -3137,7 +3411,152 @@ locals {
 
 # Source: modules/security/main.tf
 
+resource "aws_security_group" "security__alb" {
+  name        = "${var.security__name_prefix}-alb-sg"
+  description = "Allow inbound HTTP and HTTPS traffic to ALB."
+  vpc_id      = ((aws_vpc.network__this.id))
+
+  ingress {
+    description = "HTTP"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTPS"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "All outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.security__name_prefix}-alb-sg"
+  }
+}
+
 # Source: modules/security/main.tf
+
+resource "aws_security_group" "security__ecs_service" {
+  name        = "${var.security__name_prefix}-ecs-sg"
+  description = "Allow app traffic from ALB and internal ECS traffic."
+  vpc_id      = ((aws_vpc.network__this.id))
+
+  ingress {
+    description     = "Backend traffic from ALB"
+    from_port       = 8080
+    to_port         = 8080
+    protocol        = "tcp"
+    security_groups = [aws_security_group.security__alb.id]
+  }
+
+  ingress {
+    description = "Service-to-service traffic"
+    from_port   = 8080
+    to_port     = 8080
+    protocol    = "tcp"
+    self        = true
+  }
+
+  egress {
+    description = "All outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.security__name_prefix}-ecs-sg"
+  }
+}
+
+# Source: modules/security/main.tf
+
+resource "aws_security_group" "security__lambda" {
+  name        = "${var.security__name_prefix}-lambda-sg"
+  description = "Security group for Lambda functions in VPC."
+  vpc_id      = ((aws_vpc.network__this.id))
+
+  egress {
+    description = "All outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.security__name_prefix}-lambda-sg"
+  }
+}
+
+# Source: modules/security/main.tf
+
+resource "aws_security_group" "security__db" {
+  name        = "${var.security__name_prefix}-db-sg"
+  description = "Allow PostgreSQL from ECS services and Lambda."
+  vpc_id      = ((aws_vpc.network__this.id))
+
+  ingress {
+    description     = "PostgreSQL from ECS services"
+    from_port       = var.security__db_port
+    to_port         = var.security__db_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.security__ecs_service.id]
+  }
+
+  ingress {
+    description     = "PostgreSQL from Lambda"
+    from_port       = var.security__db_port
+    to_port         = var.security__db_port
+    protocol        = "tcp"
+    security_groups = [aws_security_group.security__lambda.id]
+  }
+
+  egress {
+    description = "All outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.security__name_prefix}-db-sg"
+  }
+}
+
+# Source: modules/security/main.tf
+
+data "aws_iam_policy_document" "security__ecs_task_execution_assume" {
+  statement {
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["ecs-tasks.amazonaws.com"]
+    }
+    actions = ["sts:AssumeRole"]
+  }
+}
+
+# Source: modules/security/main.tf
+
+resource "aws_iam_role" "security__ecs_task_execution" {
+  count              = local.use_lab_role ? 0 : 1
+  name               = "${var.security__name_prefix}-ecs-task-exec"
+  assume_role_policy = data.aws_iam_policy_document.security__ecs_task_execution_assume.json
+}
 
 # Source: modules/security/main.tf
 
@@ -3151,7 +3570,55 @@ locals {
 
 # Source: modules/security/main.tf
 
+data "aws_iam_policy_document" "security__lambda_assume" {
+  statement {
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+    actions = ["sts:AssumeRole"]
+  }
+}
+
 # Source: modules/security/main.tf
+
+resource "aws_iam_role" "security__log_lambda" {
+  count              = local.use_lab_role ? 0 : 1
+  name               = "${var.security__name_prefix}-log-lambda"
+  assume_role_policy = data.aws_iam_policy_document.security__lambda_assume.json
+}
+
+# Source: modules/security/main.tf
+
+# Source: modules/security/main.tf
+
+# Source: modules/security/main.tf
+
+# Source: modules/security/main.tf
+
+# Source: modules/security/main.tf
+
+resource "aws_iam_role" "security__aml_lambda" {
+  count              = local.use_lab_role ? 0 : 1
+  name               = "${var.security__name_prefix}-aml-lambda"
+  assume_role_policy = data.aws_iam_policy_document.security__lambda_assume.json
+}
+
+# Source: modules/security/main.tf
+
+# Source: modules/security/main.tf
+
+# Source: modules/security/main.tf
+
+# Source: modules/security/main.tf
+
+resource "aws_iam_role" "security__sftp_transaction_collector" {
+  count = var.security__enable_sftp_transaction_collector && !local.use_lab_role ? 1 : 0
+
+  name               = "${var.security__name_prefix}-sftp-transaction-collector"
+  assume_role_policy = data.aws_iam_policy_document.security__lambda_assume.json
+}
 
 # Source: modules/security/main.tf
 
@@ -3165,7 +3632,12 @@ locals {
 
 # Source: modules/security/main.tf
 
-# Source: modules/security/main.tf
+resource "aws_iam_role" "security__audit_consumer_lambda" {
+  count = var.security__enable_audit_pipeline && !local.use_lab_role ? 1 : 0
+
+  name               = "${var.security__name_prefix}-audit-consumer-lambda"
+  assume_role_policy = data.aws_iam_policy_document.security__lambda_assume.json
+}
 
 # Source: modules/security/main.tf
 
@@ -3177,7 +3649,12 @@ locals {
 
 # Source: modules/security/main.tf
 
-# Source: modules/security/main.tf
+resource "aws_iam_role" "security__aml_consumer_lambda" {
+  count = var.security__enable_aml_pipeline && !local.use_lab_role ? 1 : 0
+
+  name               = "${var.security__name_prefix}-aml-consumer-lambda"
+  assume_role_policy = data.aws_iam_policy_document.security__lambda_assume.json
+}
 
 # Source: modules/security/main.tf
 
@@ -3187,27 +3664,12 @@ locals {
 
 # Source: modules/security/main.tf
 
-# Source: modules/security/main.tf
+resource "aws_iam_role" "security__verification_lambda" {
+  count = var.security__enable_verification_pipeline && !local.use_lab_role ? 1 : 0
 
-# Source: modules/security/main.tf
-
-# Source: modules/security/main.tf
-
-# Source: modules/security/main.tf
-
-# Source: modules/security/main.tf
-
-# Source: modules/security/main.tf
-
-# Source: modules/security/main.tf
-
-# Source: modules/security/main.tf
-
-# Source: modules/security/main.tf
-
-# Source: modules/security/main.tf
-
-# Source: modules/security/main.tf
+  name               = "${var.security__name_prefix}-verification-lambda"
+  assume_role_policy = data.aws_iam_policy_document.security__lambda_assume.json
+}
 
 # Source: modules/security/main.tf
 
@@ -3248,7 +3710,17 @@ locals {
 
 # Source: modules/security/secrets.tf
 
-# Source: modules/security/secrets.tf
+resource "aws_secretsmanager_secret" "security__jwt_hmac" {
+  name                    = "/${var.security__project_name}/${var.security__environment}/jwt/hmac_secret"
+  description             = "Shared JWT HMAC secret for user/client/transaction/log."
+  recovery_window_in_days = 0
+
+  tags = {
+    Name        = "${var.security__project_name}-${var.security__environment}-jwt-hmac"
+    Environment = var.security__environment
+    ManagedBy   = "terraform"
+  }
+}
 
 # Source: modules/security/secrets.tf
 
@@ -3258,7 +3730,33 @@ locals {
 
 # Source: modules/security/secrets.tf
 
+resource "aws_secretsmanager_secret" "security__db_username" {
+  name                    = "/${var.security__project_name}/${var.security__environment}/db/username"
+  description             = "PostgreSQL username shared by services."
+  recovery_window_in_days = 0
+
+  tags = {
+    Name        = "${var.security__project_name}-${var.security__environment}-db-username"
+    Environment = var.security__environment
+    ManagedBy   = "terraform"
+  }
+}
+
 # Source: modules/security/secrets.tf
+
+# Source: modules/security/secrets.tf
+
+resource "aws_secretsmanager_secret" "security__db_password" {
+  name                    = "/${var.security__project_name}/${var.security__environment}/db/password"
+  description             = "PostgreSQL password shared by services."
+  recovery_window_in_days = 0
+
+  tags = {
+    Name        = "${var.security__project_name}-${var.security__environment}-db-password"
+    Environment = var.security__environment
+    ManagedBy   = "terraform"
+  }
+}
 
 # Source: modules/security/secrets.tf
 
@@ -3504,24 +4002,4 @@ variable "waf__enable_waf" {
 variable "waf__name_prefix" {
   type    = any
   default = "scroogebank-crm-prod"
-}
-
-variable "ecs__task_definition_arns" {
-  type    = any
-  default = {}
-}
-
-variable "network__nat_eip_allocation_ids" {
-  type    = any
-  default = []
-}
-
-variable "rds__kms_key_arn" {
-  type    = any
-  default = "arn:aws:kms:ap-southeast-1:000000000000:key/00000000-0000-0000-0000-000000000000"
-}
-
-variable "rds__db_parameter_group_name" {
-  type    = any
-  default = "default.postgres14"
 }

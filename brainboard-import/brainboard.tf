@@ -6,13 +6,13 @@
 terraform {
   required_version = ">= 1.5.0"
   required_providers {
-    aws    = { source = "hashicorp/aws", version = "~> 5.0" }
+    aws = { source = "hashicorp/aws", version = "~> 5.0" }
     random = { source = "hashicorp/random", version = "~> 3.0" }
   }
 }
 
 provider "aws" {
-  region                      = "ap-southeast-1"
+  region = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -20,8 +20,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias                       = "us_east_1"
-  region                      = "us-east-1"
+  alias  = "us_east_1"
+  region = "us-east-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -29,8 +29,8 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias                       = "ap_southeast_1"
-  region                      = "ap-southeast-1"
+  alias  = "ap_southeast_1"
+  region = "ap-southeast-1"
   skip_credentials_validation = true
   skip_requesting_account_id  = true
   skip_region_validation      = true
@@ -122,8 +122,8 @@ resource "aws_lb" "alb__crm" {
   name                       = substr("${var.alb__name_prefix}-alb", 0, 32)
   internal                   = false
   load_balancer_type         = "application"
-  security_groups            = [var.alb__alb_security_group_id]
-  subnets                    = var.alb__public_subnet_ids
+  security_groups            = [((aws_security_group.security__alb.id))]
+  subnets                    = (([for idx in sort(keys(local.public_subnet_map)) : aws_subnet.network__public[idx].id]))
   preserve_host_header       = true
   drop_invalid_header_fields = true
 }
@@ -137,7 +137,7 @@ resource "aws_lb_target_group" "alb__service" {
   port        = 8080
   protocol    = "HTTP"
   target_type = "ip"
-  vpc_id      = var.alb__vpc_id
+  vpc_id      = ((aws_vpc.network__this.id))
 
   health_check {
     path                = var.alb__service_health_check_path
@@ -158,7 +158,7 @@ resource "aws_lb_target_group" "alb__service_green" {
   port        = 8080
   protocol    = "HTTP"
   target_type = "ip"
-  vpc_id      = var.alb__vpc_id
+  vpc_id      = ((aws_vpc.network__this.id))
 
   health_check {
     path                = var.alb__service_health_check_path
@@ -359,7 +359,7 @@ resource "aws_apigatewayv2_api" "apigateway__log" {
 resource "aws_apigatewayv2_integration" "apigateway__log_lambda" {
   api_id                 = aws_apigatewayv2_api.apigateway__log.id
   integration_type       = "AWS_PROXY"
-  integration_uri        = var.apigateway__log_lambda_invoke_arn
+  integration_uri        = ((var.lambda__enable_log_lambda ? aws_lambda_function.lambda__log[0].invoke_arn : ""))
   payload_format_version = "2.0"
   timeout_milliseconds   = 29000
 }
@@ -407,7 +407,7 @@ resource "aws_apigatewayv2_stage" "apigateway__log_default" {
 resource "aws_lambda_permission" "apigateway__allow_api_gateway_invoke_log" {
   statement_id  = "AllowExecutionFromHttpApi"
   action        = "lambda:InvokeFunction"
-  function_name = var.apigateway__log_lambda_function_name
+  function_name = ((var.lambda__enable_log_lambda ? aws_lambda_function.lambda__log[0].function_name : ""))
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.apigateway__log.execution_arn}/*/*"
 }
@@ -526,13 +526,13 @@ resource "aws_iam_role_policy_attachment" "backup__backup_restore" {
 # Source: modules/backup/main.tf
 
 resource "aws_backup_selection" "backup__rds" {
-  count = var.backup__enable_backup && var.backup__rds_instance_arn != "" ? 1 : 0
+  count = var.backup__enable_backup && ((aws_db_instance.rds__postgres.arn)) != "" ? 1 : 0
 
   name         = "${var.backup__name_prefix}-rds"
   plan_id      = aws_backup_plan.backup__this[0].id
   iam_role_arn = aws_iam_role.backup__backup[0].arn
 
-  resources = [var.backup__rds_instance_arn]
+  resources = [((aws_db_instance.rds__postgres.arn))]
 }
 
 # Source: modules/backup/main.tf
@@ -670,10 +670,10 @@ resource "aws_cloudfront_distribution" "cloudfront__frontend" {
   default_root_object = "index.html"
   price_class         = var.cloudfront__cloudfront_price_class
   aliases             = var.cloudfront__use_custom_domain ? [var.cloudfront__app_domain_name] : []
-  web_acl_id          = var.cloudfront__waf_arn
+  web_acl_id          = ((var.waf__enable_waf ? aws_wafv2_web_acl.waf__frontend[0].arn : null))
 
   origin {
-    domain_name              = var.cloudfront__frontend_bucket_regional_domain_name
+    domain_name              = ((aws_s3_bucket.s3__frontend.bucket_regional_domain_name))
     origin_id                = "frontend-s3"
     origin_access_control_id = var.cloudfront__enable_cloudfront_oac ? aws_cloudfront_origin_access_control.cloudfront__frontend[0].id : null
 
@@ -683,7 +683,7 @@ resource "aws_cloudfront_distribution" "cloudfront__frontend" {
   }
 
   origin {
-    domain_name = var.cloudfront__use_custom_domain ? var.cloudfront__alb_origin_domain_name : var.cloudfront__alb_dns_name
+    domain_name = var.cloudfront__use_custom_domain ? var.cloudfront__alb_origin_domain_name : ((aws_lb.alb__crm.dns_name))
     origin_id   = "backend-alb"
 
     custom_origin_config {
@@ -783,7 +783,7 @@ locals {
       }
       Action = ["s3:GetObject"]
       Resource = [
-        "${var.cloudfront__frontend_bucket_arn}/*",
+        "${((aws_s3_bucket.s3__frontend.arn))}/*",
       ]
     },
     var.cloudfront__enable_cloudfront_oac ? {
@@ -806,7 +806,7 @@ locals {
 # Source: modules/cloudfront/main.tf
 
 resource "aws_s3_bucket_policy" "cloudfront__frontend" {
-  bucket = var.cloudfront__frontend_bucket_id
+  bucket = ((aws_s3_bucket.s3__frontend.id))
   policy = local.frontend_bucket_policy_json
 }
 
@@ -940,7 +940,7 @@ resource "aws_codedeploy_app" "codedeploy__ecs" {
 # Source: modules/codedeploy/main.tf
 
 resource "aws_codedeploy_deployment_group" "codedeploy__ecs" {
-  for_each = var.codedeploy__enable_codedeploy ? var.codedeploy__ecs_service_names : {}
+  for_each = var.codedeploy__enable_codedeploy ? (({ for service, ecs_service in aws_ecs_service.ecs__service : service => ecs_service.name })) : {}
 
   app_name               = aws_codedeploy_app.codedeploy__ecs[0].name
   deployment_group_name  = "${var.codedeploy__name_prefix}-${each.key}-ecs"
@@ -969,22 +969,22 @@ resource "aws_codedeploy_deployment_group" "codedeploy__ecs" {
   }
 
   ecs_service {
-    cluster_name = var.codedeploy__ecs_cluster_name
+    cluster_name = ((aws_ecs_cluster.ecs__this.name))
     service_name = each.value
   }
 
   load_balancer_info {
     target_group_pair_info {
       prod_traffic_route {
-        listener_arns = [var.codedeploy__alb_listener_arn]
+        listener_arns = [((var.alb__use_custom_domain ? aws_lb_listener.alb__https[0].arn : aws_lb_listener.alb__http.arn))]
       }
 
       target_group {
-        name = var.codedeploy__ecs_blue_target_group_names[each.key]
+        name = (({ for service, target_group in aws_lb_target_group.alb__service : service => target_group.name }))[each.key]
       }
 
       target_group {
-        name = var.codedeploy__ecs_green_target_group_names[each.key]
+        name = (({ for service, target_group in aws_lb_target_group.alb__service_green : service => target_group.name }))[each.key]
       }
     }
   }
@@ -1706,13 +1706,13 @@ resource "aws_ecs_task_definition" "ecs__service" {
   network_mode             = "awsvpc"
   cpu                      = tostring(var.ecs__ecs_task_cpu)
   memory                   = tostring(var.ecs__ecs_task_memory)
-  execution_role_arn       = var.ecs__ecs_task_execution_role_arn
+  execution_role_arn       = ((local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.security__ecs_task_execution[0].arn))
   task_role_arn            = var.ecs__ecs_task_role_arns[each.key]
 
   container_definitions = jsonencode([
     {
       name      = each.key
-      image     = "${var.ecs__ecr_repository_urls[each.key]}:${each.value.image_tag}"
+      image     = "${(({ for service, repo in aws_ecr_repository.ecr__service : service => repo.repository_url }))[each.key]}:${each.value.image_tag}"
       essential = true
 
       portMappings = [
@@ -1793,13 +1793,13 @@ resource "aws_ecs_service" "ecs__service" {
   # Network configuration for Fargate tasks
   network_configuration {
     subnets          = var.ecs__service_subnet_ids
-    security_groups  = [var.ecs__ecs_service_security_group_id]
+    security_groups  = [((aws_security_group.security__ecs_service.id))]
     assign_public_ip = var.ecs__assign_public_ip
   }
 
   # Load balancer integration
   load_balancer {
-    target_group_arn = var.ecs__target_group_arns[each.key]
+    target_group_arn = (({ for service, target_group in aws_lb_target_group.alb__service : service => target_group.arn }))[each.key]
     container_name   = each.key
     container_port   = 8080
   }
@@ -1823,7 +1823,7 @@ resource "aws_ssm_parameter" "ecs__client_service_url" {
 
   lifecycle {
     precondition {
-      condition     = var.ecs__enable_service_discovery || var.ecs__alb_dns_name != ""
+      condition     = var.ecs__enable_service_discovery || ((aws_lb.alb__crm.dns_name)) != ""
       error_message = "alb_dns_name must be provided when enable_service_discovery is false; CLIENT_SERVICE_URL would otherwise be empty."
     }
   }
@@ -1873,7 +1873,7 @@ locals {
         },
         {
           name  = "SPRING_DATASOURCE_URL"
-          value = var.ecs__db_jdbc_url
+          value = ((local.db_jdbc_url))
         },
         {
           name  = "APP_USER_STORE_TYPE"
@@ -1899,19 +1899,19 @@ locals {
       secrets = [
         {
           name      = "ROOT_ADMIN_PASSWORD"
-          valueFrom = var.ecs__root_admin_password_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__root_admin_password.arn))
         },
         {
           name      = "JWT_HMAC_SECRET"
-          valueFrom = var.ecs__jwt_hmac_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
         },
         {
           name      = "SPRING_DATASOURCE_USERNAME"
-          valueFrom = var.ecs__db_username_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__db_username.arn))
         },
         {
           name      = "SPRING_DATASOURCE_PASSWORD"
-          valueFrom = var.ecs__db_password_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__db_password.arn))
         }
       ]
     }
@@ -1921,7 +1921,7 @@ locals {
       environment = [
         {
           name  = "SPRING_DATASOURCE_URL"
-          value = var.ecs__db_jdbc_url
+          value = ((local.db_jdbc_url))
         },
         {
           name  = "CLIENT_LOG_SERVICE_URL"
@@ -1937,11 +1937,11 @@ locals {
         },
         {
           name  = "VERIFICATION_SNS_TOPIC_ARN"
-          value = var.ecs__verification_sns_topic_arn
+          value = ((var.sns__enable_verification_pipeline ? aws_sns_topic.sns__verification[0].arn : ""))
         },
         {
           name  = "VERIFICATION_DOCUMENTS_BUCKET"
-          value = var.ecs__verification_documents_bucket
+          value = ((var.s3__enable_verification_bucket ? aws_s3_bucket.s3__verification[0].id : ""))
         },
         {
           name  = "VERIFICATION_EMAIL_AWS_REGION"
@@ -1967,15 +1967,15 @@ locals {
       secrets = [
         {
           name      = "SPRING_DATASOURCE_USERNAME"
-          valueFrom = var.ecs__db_username_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__db_username.arn))
         },
         {
           name      = "SPRING_DATASOURCE_PASSWORD"
-          valueFrom = var.ecs__db_password_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__db_password.arn))
         },
         {
           name      = "JWT_HMAC_SECRET"
-          valueFrom = var.ecs__jwt_hmac_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
         }
       ]
     }
@@ -1993,7 +1993,7 @@ locals {
         },
         {
           name  = "SPRING_DATASOURCE_URL"
-          value = var.ecs__db_jdbc_url
+          value = ((local.db_jdbc_url))
         },
         {
           name  = "APP_TRANSACTIONS_STORE_TYPE"
@@ -2001,7 +2001,7 @@ locals {
         },
         {
           name  = "TRANSACTION_IMPORT_S3_BUCKET"
-          value = var.ecs__transaction_import_s3_bucket
+          value = ((var.s3__enable_transaction_sftp_bucket ? aws_s3_bucket.s3__transaction_sftp[0].bucket : ""))
         },
         {
           name  = "TRANSACTION_IMPORT_S3_REGION"
@@ -2035,15 +2035,15 @@ locals {
       secrets = [
         {
           name      = "JWT_HMAC_SECRET"
-          valueFrom = var.ecs__jwt_hmac_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
         },
         {
           name      = "SPRING_DATASOURCE_USERNAME"
-          valueFrom = var.ecs__db_username_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__db_username.arn))
         },
         {
           name      = "SPRING_DATASOURCE_PASSWORD"
-          valueFrom = var.ecs__db_password_secret_arn
+          valueFrom = ((aws_secretsmanager_secret.security__db_password.arn))
         }
       ]
     }
@@ -2059,7 +2059,7 @@ locals {
   # Derived from the resource attribute when discovery is on so that any change
   # to the namespace name propagates automatically rather than silently diverging.
   cloudmap_namespace_name     = var.ecs__enable_service_discovery ? aws_service_discovery_private_dns_namespace.ecs__internal[0].name : "${var.ecs__environment}.${var.ecs__project_name}.internal"
-  client_service_internal_url = var.ecs__enable_service_discovery ? "http://client.${local.cloudmap_namespace_name}:8080" : "http://${var.ecs__alb_dns_name}"
+  client_service_internal_url = var.ecs__enable_service_discovery ? "http://client.${local.cloudmap_namespace_name}:8080" : "http://${((aws_lb.alb__crm.dns_name))}"
 }
 
 # Source: modules/ecs/main.tf
@@ -2077,7 +2077,7 @@ resource "aws_service_discovery_private_dns_namespace" "ecs__internal" {
   count = var.ecs__enable_service_discovery ? 1 : 0
 
   name = "${var.ecs__environment}.${var.ecs__project_name}.internal"
-  vpc  = var.ecs__vpc_id
+  vpc  = ((aws_vpc.network__this.id))
 }
 
 # Source: modules/ecs/service_discovery.tf
@@ -2454,7 +2454,7 @@ resource "aws_lambda_function" "lambda__log" {
   function_name    = "${var.lambda__name_prefix}-log-service"
   filename         = var.lambda__log_lambda_zip_path
   source_code_hash = filebase64sha256(var.lambda__log_lambda_zip_path)
-  role             = var.lambda__log_lambda_role_arn
+  role             = ((local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.security__log_lambda[0].arn))
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.13"
   memory_size      = var.lambda__log_lambda_memory_size
@@ -2462,18 +2462,18 @@ resource "aws_lambda_function" "lambda__log" {
   publish          = true
 
   vpc_config {
-    subnet_ids         = var.lambda__private_subnet_ids
-    security_group_ids = [var.lambda__lambda_security_group_id]
+    subnet_ids         = (([for idx in sort(keys(local.private_subnet_map)) : aws_subnet.network__private[idx].id]))
+    security_group_ids = [((aws_security_group.security__lambda.id))]
   }
 
   environment {
     variables = {
-      DB_HOST                = var.lambda__db_host
+      DB_HOST                = ((aws_db_instance.rds__postgres.address))
       DB_PORT                = tostring(var.lambda__db_port)
       DB_NAME                = var.lambda__db_name
-      DB_USER_SECRET_ARN     = var.lambda__db_username_secret_arn
-      DB_PASSWORD_SECRET_ARN = var.lambda__db_password_secret_arn
-      JWT_HMAC_SECRET_ARN    = var.lambda__jwt_hmac_secret_arn
+      DB_USER_SECRET_ARN     = ((aws_secretsmanager_secret.security__db_username.arn))
+      DB_PASSWORD_SECRET_ARN = ((aws_secretsmanager_secret.security__db_password.arn))
+      JWT_HMAC_SECRET_ARN    = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
       AUTH_MODE              = var.lambda__auth_mode
       COGNITO_ISSUER         = var.lambda__cognito_issuer_url
       COGNITO_JWKS_URL       = var.lambda__cognito_jwks_url
@@ -2501,7 +2501,7 @@ resource "aws_lambda_function" "lambda__aml" {
   function_name    = "${var.lambda__name_prefix}-aml"
   filename         = var.lambda__aml_lambda_zip_path
   source_code_hash = filebase64sha256(var.lambda__aml_lambda_zip_path)
-  role             = var.lambda__aml_lambda_role_arn
+  role             = ((local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.security__aml_lambda[0].arn))
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.13"
   memory_size      = var.lambda__aml_lambda_memory_size
@@ -2517,8 +2517,8 @@ resource "aws_lambda_function" "lambda__aml" {
       SFTP_REMOTE_PATH            = var.lambda__aml_sftp_remote_path
       CRM_API_BASE_URL            = var.lambda__crm_api_base_url
       CRM_LOG_API_URL_PARAM       = "/${var.lambda__project_name}/${var.lambda__environment}/service/log/url"
-      CRM_API_JWT_HMAC_SECRET_ARN = var.lambda__jwt_hmac_secret_arn
-      JWT_HMAC_SECRET_ARN         = var.lambda__jwt_hmac_secret_arn
+      CRM_API_JWT_HMAC_SECRET_ARN = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
+      JWT_HMAC_SECRET_ARN         = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
       ENTITY_ID                   = var.lambda__aml_entity_id
     }
   }
@@ -2577,7 +2577,7 @@ resource "aws_lambda_function" "lambda__sftp_transaction_collector" {
   function_name    = "${var.lambda__name_prefix}-sftp-transaction-collector"
   filename         = var.lambda__sftp_transaction_collector_zip_path
   source_code_hash = filebase64sha256(var.lambda__sftp_transaction_collector_zip_path)
-  role             = var.lambda__sftp_transaction_collector_role_arn
+  role             = ((var.security__enable_sftp_transaction_collector ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.security__sftp_transaction_collector[0].arn) : ""))
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.13"
   memory_size      = var.lambda__sftp_transaction_collector_memory_size
@@ -2587,11 +2587,11 @@ resource "aws_lambda_function" "lambda__sftp_transaction_collector" {
   environment {
     variables = {
       # Legacy naming retained for compatibility; bucket/prefix are S3-backed mock ingestion inputs.
-      TRANSACTION_SFTP_BUCKET                = var.lambda__transaction_sftp_bucket_id
+      TRANSACTION_SFTP_BUCKET                = ((var.s3__enable_transaction_sftp_bucket ? aws_s3_bucket.s3__transaction_sftp[0].id : ""))
       TRANSACTION_SFTP_PREFIX                = var.lambda__transaction_sftp_remote_prefix
       TRANSACTION_IMPORT_URL                 = var.lambda__transaction_import_api_url
-      TRANSACTION_IMPORT_JWT_HMAC_SECRET_ARN = var.lambda__jwt_hmac_secret_arn
-      JWT_HMAC_SECRET_ARN                    = var.lambda__jwt_hmac_secret_arn
+      TRANSACTION_IMPORT_JWT_HMAC_SECRET_ARN = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
+      JWT_HMAC_SECRET_ARN                    = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
     }
   }
 
@@ -2649,7 +2649,7 @@ resource "aws_lambda_function" "lambda__audit_consumer" {
   function_name    = "${var.lambda__name_prefix}-audit-consumer"
   filename         = var.lambda__audit_consumer_zip_path
   source_code_hash = filebase64sha256(var.lambda__audit_consumer_zip_path)
-  role             = var.lambda__audit_consumer_role_arn
+  role             = ((var.security__enable_audit_pipeline ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.security__audit_consumer_lambda[0].arn) : ""))
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.13"
   memory_size      = var.lambda__audit_consumer_memory_size
@@ -2657,7 +2657,7 @@ resource "aws_lambda_function" "lambda__audit_consumer" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE_NAME = var.lambda__audit_dynamodb_table_name
+      DYNAMODB_TABLE_NAME = ((var.dynamodb__enable_audit_table ? aws_dynamodb_table.dynamodb__audit_logs[0].name : ""))
     }
   }
 
@@ -2669,7 +2669,7 @@ resource "aws_lambda_function" "lambda__audit_consumer" {
 resource "aws_lambda_event_source_mapping" "lambda__audit_sqs" {
   count = var.lambda__enable_audit_consumer ? 1 : 0
 
-  event_source_arn        = var.lambda__audit_sqs_arn
+  event_source_arn        = ((var.sqs__enable_audit_pipeline ? aws_sqs_queue.sqs__audit[0].arn : ""))
   function_name           = aws_lambda_function.lambda__audit_consumer[0].arn
   batch_size              = 10
   enabled                 = true
@@ -2693,7 +2693,7 @@ resource "aws_lambda_function" "lambda__aml_consumer" {
   function_name    = "${var.lambda__name_prefix}-aml-consumer"
   filename         = var.lambda__aml_consumer_zip_path
   source_code_hash = filebase64sha256(var.lambda__aml_consumer_zip_path)
-  role             = var.lambda__aml_consumer_role_arn
+  role             = ((var.security__enable_aml_pipeline ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.security__aml_consumer_lambda[0].arn) : ""))
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.13"
   memory_size      = var.lambda__aml_consumer_memory_size
@@ -2701,7 +2701,7 @@ resource "aws_lambda_function" "lambda__aml_consumer" {
 
   environment {
     variables = {
-      DYNAMODB_TABLE_NAME = var.lambda__aml_dynamodb_table_name
+      DYNAMODB_TABLE_NAME = ((var.dynamodb__enable_aml_table ? aws_dynamodb_table.dynamodb__aml_reports[0].name : ""))
     }
   }
 
@@ -2713,7 +2713,7 @@ resource "aws_lambda_function" "lambda__aml_consumer" {
 resource "aws_lambda_event_source_mapping" "lambda__aml_sqs" {
   count = var.lambda__enable_aml_consumer ? 1 : 0
 
-  event_source_arn        = var.lambda__aml_sqs_arn
+  event_source_arn        = ((var.sqs__enable_aml_pipeline ? aws_sqs_queue.sqs__aml[0].arn : ""))
   function_name           = aws_lambda_function.lambda__aml_consumer[0].arn
   batch_size              = 10
   enabled                 = true
@@ -2737,7 +2737,7 @@ resource "aws_lambda_function" "lambda__verification" {
   function_name    = "${var.lambda__name_prefix}-verification"
   filename         = var.lambda__verification_zip_path
   source_code_hash = filebase64sha256(var.lambda__verification_zip_path)
-  role             = var.lambda__verification_role_arn
+  role             = ((var.security__enable_verification_pipeline ? (local.use_lab_role ? local.effective_lab_role_arn : aws_iam_role.security__verification_lambda[0].arn) : ""))
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.13"
   memory_size      = var.lambda__verification_memory_size
@@ -2749,7 +2749,7 @@ resource "aws_lambda_function" "lambda__verification" {
       SES_SOURCE_EMAIL                 = var.lambda__ses_sender_email
       FRONTEND_BASE_URL                = var.lambda__verification_frontend_base_url
       LOG_API_BASE_URL                 = var.lambda__log_api_base_url
-      VERIFICATION_JWT_HMAC_SECRET_ARN = var.lambda__verification_jwt_hmac_secret_arn
+      VERIFICATION_JWT_HMAC_SECRET_ARN = ((aws_secretsmanager_secret.security__jwt_hmac.arn))
       VERIFICATION_JWT_SUB             = "SYSTEM_VERIFICATION_FEEDBACK"
       VERIFICATION_JWT_ROLE            = "admin"
     }
@@ -2767,7 +2767,7 @@ resource "aws_lambda_permission" "lambda__allow_sns_invoke_verification" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.lambda__verification[0].function_name
   principal     = "sns.amazonaws.com"
-  source_arn    = var.lambda__verification_sns_topic_arn
+  source_arn    = ((var.sns__enable_verification_pipeline ? aws_sns_topic.sns__verification[0].arn : ""))
 }
 
 # Source: modules/lambda/main.tf
@@ -2775,7 +2775,7 @@ resource "aws_lambda_permission" "lambda__allow_sns_invoke_verification" {
 resource "aws_sns_topic_subscription" "lambda__verification_feedback" {
   count = var.lambda__enable_verification_lambda ? 1 : 0
 
-  topic_arn = var.lambda__verification_sns_topic_arn
+  topic_arn = ((var.sns__enable_verification_pipeline ? aws_sns_topic.sns__verification[0].arn : ""))
   protocol  = "lambda"
   endpoint  = aws_lambda_function.lambda__verification[0].arn
 
@@ -3388,7 +3388,7 @@ resource "aws_cloudwatch_metric_alarm" "observability__ecs_cpu_high" {
   ok_actions          = local.alarm_action_arns
 
   dimensions = {
-    ClusterName = var.observability__ecs_cluster_name
+    ClusterName = ((aws_ecs_cluster.ecs__this.name))
     ServiceName = "${var.observability__name_prefix}-${each.key}"
   }
 
@@ -3415,7 +3415,7 @@ resource "aws_cloudwatch_metric_alarm" "observability__rds_cpu_high" {
   ok_actions          = local.alarm_action_arns
 
   dimensions = {
-    DBInstanceIdentifier = var.observability__rds_instance_identifier
+    DBInstanceIdentifier = ((aws_db_instance.rds__postgres.identifier))
   }
 
   tags = {
@@ -3441,7 +3441,7 @@ resource "aws_cloudwatch_metric_alarm" "observability__rds_free_storage" {
   ok_actions          = local.alarm_action_arns
 
   dimensions = {
-    DBInstanceIdentifier = var.observability__rds_instance_identifier
+    DBInstanceIdentifier = ((aws_db_instance.rds__postgres.identifier))
   }
 
   tags = {
@@ -3468,7 +3468,7 @@ resource "aws_cloudwatch_metric_alarm" "observability__alb_5xx" {
   ok_actions          = local.alarm_action_arns
 
   dimensions = {
-    LoadBalancer = var.observability__alb_arn_suffix
+    LoadBalancer = ((aws_lb.alb__crm.arn_suffix))
   }
 
   tags = {
@@ -3548,7 +3548,7 @@ resource "aws_cloudwatch_metric_alarm" "observability__ecs_memory_high" {
   ok_actions          = local.alarm_action_arns
 
   dimensions = {
-    ClusterName = var.observability__ecs_cluster_name
+    ClusterName = ((aws_ecs_cluster.ecs__this.name))
     ServiceName = "${var.observability__name_prefix}-${each.key}"
   }
 
@@ -3576,7 +3576,7 @@ resource "aws_cloudwatch_metric_alarm" "observability__ecs_running_tasks_low" {
   ok_actions          = local.alarm_action_arns
 
   dimensions = {
-    ClusterName = var.observability__ecs_cluster_name
+    ClusterName = ((aws_ecs_cluster.ecs__this.name))
     ServiceName = "${var.observability__name_prefix}-${each.key}"
   }
 
@@ -3588,7 +3588,7 @@ resource "aws_cloudwatch_metric_alarm" "observability__ecs_running_tasks_low" {
 # Source: modules/observability/main.tf
 
 resource "aws_cloudwatch_metric_alarm" "observability__alb_unhealthy_hosts" {
-  for_each = var.observability__enable_alb_alarms ? var.observability__target_group_arn_suffixes : {}
+  for_each = var.observability__enable_alb_alarms ? (({ for service, tg in aws_lb_target_group.alb__service : service => tg.arn_suffix })) : {}
 
   alarm_name          = "${var.observability__name_prefix}-${each.key}-unhealthy-hosts"
   comparison_operator = "GreaterThanOrEqualToThreshold"
@@ -3604,7 +3604,7 @@ resource "aws_cloudwatch_metric_alarm" "observability__alb_unhealthy_hosts" {
   ok_actions          = local.alarm_action_arns
 
   dimensions = {
-    LoadBalancer = var.observability__alb_arn_suffix
+    LoadBalancer = ((aws_lb.alb__crm.arn_suffix))
     TargetGroup  = each.value
   }
 
@@ -3616,7 +3616,7 @@ resource "aws_cloudwatch_metric_alarm" "observability__alb_unhealthy_hosts" {
 # Source: modules/observability/main.tf
 
 resource "aws_cloudwatch_metric_alarm" "observability__alb_target_5xx" {
-  for_each = var.observability__enable_alb_alarms ? var.observability__target_group_arn_suffixes : {}
+  for_each = var.observability__enable_alb_alarms ? (({ for service, tg in aws_lb_target_group.alb__service : service => tg.arn_suffix })) : {}
 
   alarm_name          = "${var.observability__name_prefix}-${each.key}-target-5xx-high"
   comparison_operator = "GreaterThanThreshold"
@@ -3632,7 +3632,7 @@ resource "aws_cloudwatch_metric_alarm" "observability__alb_target_5xx" {
   ok_actions          = local.alarm_action_arns
 
   dimensions = {
-    LoadBalancer = var.observability__alb_arn_suffix
+    LoadBalancer = ((aws_lb.alb__crm.arn_suffix))
     TargetGroup  = each.value
   }
 
@@ -3644,7 +3644,7 @@ resource "aws_cloudwatch_metric_alarm" "observability__alb_target_5xx" {
 # Source: modules/observability/main.tf
 
 resource "aws_cloudwatch_metric_alarm" "observability__alb_response_time" {
-  for_each = var.observability__enable_alb_alarms ? var.observability__target_group_arn_suffixes : {}
+  for_each = var.observability__enable_alb_alarms ? (({ for service, tg in aws_lb_target_group.alb__service : service => tg.arn_suffix })) : {}
 
   alarm_name          = "${var.observability__name_prefix}-${each.key}-response-time-high"
   comparison_operator = "GreaterThanThreshold"
@@ -3660,7 +3660,7 @@ resource "aws_cloudwatch_metric_alarm" "observability__alb_response_time" {
   ok_actions          = local.alarm_action_arns
 
   dimensions = {
-    LoadBalancer = var.observability__alb_arn_suffix
+    LoadBalancer = ((aws_lb.alb__crm.arn_suffix))
     TargetGroup  = each.value
   }
 
@@ -3688,7 +3688,7 @@ resource "aws_cloudwatch_dashboard" "observability__main" {
           height = 6
           properties = {
             title   = "ECS CPU Utilization (%)"
-            metrics = [for svc in var.observability__ecs_service_names : ["AWS/ECS", "CPUUtilization", "ClusterName", var.observability__ecs_cluster_name, "ServiceName", "${var.observability__name_prefix}-${svc}"]]
+            metrics = [for svc in var.observability__ecs_service_names : ["AWS/ECS", "CPUUtilization", "ClusterName", ((aws_ecs_cluster.ecs__this.name)), "ServiceName", "${var.observability__name_prefix}-${svc}"]]
             period  = 300
             stat    = "Average"
             region  = var.observability__aws_region
@@ -3703,7 +3703,7 @@ resource "aws_cloudwatch_dashboard" "observability__main" {
           height = 6
           properties = {
             title   = "ECS Memory Utilization (%)"
-            metrics = [for svc in var.observability__ecs_service_names : ["AWS/ECS", "MemoryUtilization", "ClusterName", var.observability__ecs_cluster_name, "ServiceName", "${var.observability__name_prefix}-${svc}"]]
+            metrics = [for svc in var.observability__ecs_service_names : ["AWS/ECS", "MemoryUtilization", "ClusterName", ((aws_ecs_cluster.ecs__this.name)), "ServiceName", "${var.observability__name_prefix}-${svc}"]]
             period  = 300
             stat    = "Average"
             region  = var.observability__aws_region
@@ -3718,7 +3718,7 @@ resource "aws_cloudwatch_dashboard" "observability__main" {
           height = 6
           properties = {
             title   = "ECS Running Task Count"
-            metrics = [for svc in var.observability__ecs_service_names : ["ECS/ContainerInsights", "RunningTaskCount", "ClusterName", var.observability__ecs_cluster_name, "ServiceName", "${var.observability__name_prefix}-${svc}"]]
+            metrics = [for svc in var.observability__ecs_service_names : ["ECS/ContainerInsights", "RunningTaskCount", "ClusterName", ((aws_ecs_cluster.ecs__this.name)), "ServiceName", "${var.observability__name_prefix}-${svc}"]]
             period  = 60
             stat    = "Average"
             region  = var.observability__aws_region
@@ -3737,7 +3737,7 @@ resource "aws_cloudwatch_dashboard" "observability__main" {
           properties = {
             title = "ALB Request Count"
             metrics = [
-              ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", var.observability__alb_arn_suffix, { stat = "Sum" }]
+              ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", ((aws_lb.alb__crm.arn_suffix)), { stat = "Sum" }]
             ]
             period = 300
             region = var.observability__aws_region
@@ -3752,10 +3752,10 @@ resource "aws_cloudwatch_dashboard" "observability__main" {
           properties = {
             title = "ALB HTTP Response Codes"
             metrics = [
-              ["AWS/ApplicationELB", "HTTPCode_Target_2XX_Count", "LoadBalancer", var.observability__alb_arn_suffix, { stat = "Sum", label = "Target 2XX" }],
-              ["AWS/ApplicationELB", "HTTPCode_Target_4XX_Count", "LoadBalancer", var.observability__alb_arn_suffix, { stat = "Sum", label = "Target 4XX" }],
-              ["AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", var.observability__alb_arn_suffix, { stat = "Sum", label = "Target 5XX" }],
-              ["AWS/ApplicationELB", "HTTPCode_ELB_5XX_Count", "LoadBalancer", var.observability__alb_arn_suffix, { stat = "Sum", label = "ELB 5XX" }]
+              ["AWS/ApplicationELB", "HTTPCode_Target_2XX_Count", "LoadBalancer", ((aws_lb.alb__crm.arn_suffix)), { stat = "Sum", label = "Target 2XX" }],
+              ["AWS/ApplicationELB", "HTTPCode_Target_4XX_Count", "LoadBalancer", ((aws_lb.alb__crm.arn_suffix)), { stat = "Sum", label = "Target 4XX" }],
+              ["AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", "LoadBalancer", ((aws_lb.alb__crm.arn_suffix)), { stat = "Sum", label = "Target 5XX" }],
+              ["AWS/ApplicationELB", "HTTPCode_ELB_5XX_Count", "LoadBalancer", ((aws_lb.alb__crm.arn_suffix)), { stat = "Sum", label = "ELB 5XX" }]
             ]
             period = 300
             region = var.observability__aws_region
@@ -3770,8 +3770,8 @@ resource "aws_cloudwatch_dashboard" "observability__main" {
           properties = {
             title = "ALB Target Response Time (s)"
             metrics = [
-              ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", var.observability__alb_arn_suffix, { stat = "Average", label = "Avg" }],
-              ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", var.observability__alb_arn_suffix, { stat = "p99", label = "p99" }]
+              ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", ((aws_lb.alb__crm.arn_suffix)), { stat = "Average", label = "Avg" }],
+              ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", ((aws_lb.alb__crm.arn_suffix)), { stat = "p99", label = "p99" }]
             ]
             period = 300
             region = var.observability__aws_region
@@ -3788,7 +3788,7 @@ resource "aws_cloudwatch_dashboard" "observability__main" {
           height = 6
           properties = {
             title   = "ALB Healthy Host Count"
-            metrics = [for svc, suffix in var.observability__target_group_arn_suffixes : ["AWS/ApplicationELB", "HealthyHostCount", "TargetGroup", suffix, "LoadBalancer", var.observability__alb_arn_suffix, { label = svc }]]
+            metrics = [for svc, suffix in (({ for service, tg in aws_lb_target_group.alb__service : service => tg.arn_suffix })) : ["AWS/ApplicationELB", "HealthyHostCount", "TargetGroup", suffix, "LoadBalancer", ((aws_lb.alb__crm.arn_suffix)), { label = svc }]]
             period  = 60
             stat    = "Average"
             region  = var.observability__aws_region
@@ -3803,7 +3803,7 @@ resource "aws_cloudwatch_dashboard" "observability__main" {
           height = 6
           properties = {
             title   = "ALB Unhealthy Host Count"
-            metrics = [for svc, suffix in var.observability__target_group_arn_suffixes : ["AWS/ApplicationELB", "UnHealthyHostCount", "TargetGroup", suffix, "LoadBalancer", var.observability__alb_arn_suffix, { label = svc }]]
+            metrics = [for svc, suffix in (({ for service, tg in aws_lb_target_group.alb__service : service => tg.arn_suffix })) : ["AWS/ApplicationELB", "UnHealthyHostCount", "TargetGroup", suffix, "LoadBalancer", ((aws_lb.alb__crm.arn_suffix)), { label = svc }]]
             period  = 60
             stat    = "Average"
             region  = var.observability__aws_region
@@ -3997,11 +3997,11 @@ resource "aws_db_instance" "rds__postgres" {
   kms_key_id                 = aws_kms_key.rds__rds.arn
   db_name                    = var.rds__db_name
   username                   = var.rds__db_username
-  password                   = var.rds__db_password_value
+  password                   = ((local.db_password_value))
   port                       = var.rds__db_port
   parameter_group_name       = aws_db_parameter_group.rds__postgres.name
   db_subnet_group_name       = aws_db_subnet_group.rds__postgres.name
-  vpc_security_group_ids     = [var.rds__db_security_group_id]
+  vpc_security_group_ids     = [((aws_security_group.security__db.id))]
   backup_retention_period    = var.rds__db_backup_retention_days
   multi_az                   = var.rds__db_multi_az
   skip_final_snapshot        = var.rds__db_skip_final_snapshot
@@ -4435,7 +4435,7 @@ locals {
 resource "aws_security_group" "security__alb" {
   name        = "${var.security__name_prefix}-alb-sg"
   description = "Allow inbound HTTP and HTTPS traffic to ALB."
-  vpc_id      = var.security__vpc_id
+  vpc_id      = ((aws_vpc.network__this.id))
 
   ingress {
     description = "HTTP"
@@ -4471,7 +4471,7 @@ resource "aws_security_group" "security__alb" {
 resource "aws_security_group" "security__ecs_service" {
   name        = "${var.security__name_prefix}-ecs-sg"
   description = "Allow app traffic from ALB and internal ECS traffic."
-  vpc_id      = var.security__vpc_id
+  vpc_id      = ((aws_vpc.network__this.id))
 
   ingress {
     description     = "Backend traffic from ALB"
@@ -4507,7 +4507,7 @@ resource "aws_security_group" "security__ecs_service" {
 resource "aws_security_group" "security__lambda" {
   name        = "${var.security__name_prefix}-lambda-sg"
   description = "Security group for Lambda functions in VPC."
-  vpc_id      = var.security__vpc_id
+  vpc_id      = ((aws_vpc.network__this.id))
 
   egress {
     description = "All outbound"
@@ -4527,7 +4527,7 @@ resource "aws_security_group" "security__lambda" {
 resource "aws_security_group" "security__db" {
   name        = "${var.security__name_prefix}-db-sg"
   description = "Allow PostgreSQL from ECS services and Lambda."
-  vpc_id      = var.security__vpc_id
+  vpc_id      = ((aws_vpc.network__this.id))
 
   ingress {
     description     = "PostgreSQL from ECS services"
@@ -4791,8 +4791,8 @@ data "aws_iam_policy_document" "security__sftp_transaction_collector_s3" {
       "s3:ListBucket",
     ]
     resources = compact([
-      var.security__transaction_sftp_bucket_arn,
-      "${var.security__transaction_sftp_bucket_arn}/*",
+      ((var.s3__enable_transaction_sftp_bucket ? aws_s3_bucket.s3__transaction_sftp[0].arn : "")),
+      "${((var.s3__enable_transaction_sftp_bucket ? aws_s3_bucket.s3__transaction_sftp[0].arn : ""))}/*",
     ])
   }
 }
@@ -4874,7 +4874,7 @@ data "aws_iam_policy_document" "security__audit_consumer_lambda" {
       "sqs:DeleteMessage",
       "sqs:GetQueueAttributes",
     ]
-    resources = compact([var.security__audit_sqs_arn, var.security__audit_dlq_arn])
+    resources = compact([((var.sqs__enable_audit_pipeline ? aws_sqs_queue.sqs__audit[0].arn : "")), ((var.sqs__enable_audit_pipeline ? aws_sqs_queue.sqs__audit_dlq[0].arn : ""))])
   }
 
   statement {
@@ -4884,7 +4884,7 @@ data "aws_iam_policy_document" "security__audit_consumer_lambda" {
       "dynamodb:PutItem",
       "dynamodb:BatchWriteItem",
     ]
-    resources = [var.security__audit_dynamodb_table_arn]
+    resources = [((var.dynamodb__enable_audit_table ? aws_dynamodb_table.dynamodb__audit_logs[0].arn : ""))]
   }
 }
 
@@ -4929,7 +4929,7 @@ data "aws_iam_policy_document" "security__aml_consumer_lambda" {
       "sqs:DeleteMessage",
       "sqs:GetQueueAttributes",
     ]
-    resources = compact([var.security__aml_sqs_arn, var.security__aml_dlq_arn])
+    resources = compact([((var.sqs__enable_aml_pipeline ? aws_sqs_queue.sqs__aml[0].arn : "")), ((var.sqs__enable_aml_pipeline ? aws_sqs_queue.sqs__aml_dlq[0].arn : ""))])
   }
 
   statement {
@@ -4939,7 +4939,7 @@ data "aws_iam_policy_document" "security__aml_consumer_lambda" {
       "dynamodb:PutItem",
       "dynamodb:BatchWriteItem",
     ]
-    resources = [var.security__aml_dynamodb_table_arn]
+    resources = [((var.dynamodb__enable_aml_table ? aws_dynamodb_table.dynamodb__aml_reports[0].arn : ""))]
   }
 }
 
@@ -4984,8 +4984,8 @@ data "aws_iam_policy_document" "security__verification_lambda" {
       "s3:ListBucket",
     ]
     resources = [
-      var.security__verification_bucket_arn,
-      "${var.security__verification_bucket_arn}/*",
+      ((var.s3__enable_verification_bucket ? aws_s3_bucket.s3__verification[0].arn : "")),
+      "${((var.s3__enable_verification_bucket ? aws_s3_bucket.s3__verification[0].arn : ""))}/*",
     ]
   }
 
@@ -4995,7 +4995,7 @@ data "aws_iam_policy_document" "security__verification_lambda" {
     actions = [
       "sns:Publish",
     ]
-    resources = [var.security__verification_sns_topic_arn]
+    resources = [((var.sns__enable_verification_pipeline ? aws_sns_topic.sns__verification[0].arn : ""))]
   }
 
   statement {
@@ -5057,7 +5057,7 @@ resource "aws_iam_role_policy" "security__ecs_task_client_ses_send" {
 # Source: modules/security/main.tf
 
 data "aws_iam_policy_document" "security__ecs_client_publish_verification_sns" {
-  count = var.security__enable_verification_pipeline && var.security__verification_sns_topic_arn != "" && !local.use_lab_role ? 1 : 0
+  count = var.security__enable_verification_pipeline && ((var.sns__enable_verification_pipeline ? aws_sns_topic.sns__verification[0].arn : "")) != "" && !local.use_lab_role ? 1 : 0
 
   statement {
     sid    = "PublishVerificationRequestedEvents"
@@ -5065,14 +5065,14 @@ data "aws_iam_policy_document" "security__ecs_client_publish_verification_sns" {
     actions = [
       "sns:Publish",
     ]
-    resources = [var.security__verification_sns_topic_arn]
+    resources = [((var.sns__enable_verification_pipeline ? aws_sns_topic.sns__verification[0].arn : ""))]
   }
 }
 
 # Source: modules/security/main.tf
 
 resource "aws_iam_role_policy" "security__ecs_task_client_publish_verification_sns" {
-  count = var.security__enable_verification_pipeline && var.security__verification_sns_topic_arn != "" && !local.use_lab_role ? 1 : 0
+  count = var.security__enable_verification_pipeline && ((var.sns__enable_verification_pipeline ? aws_sns_topic.sns__verification[0].arn : "")) != "" && !local.use_lab_role ? 1 : 0
 
   name   = "${var.security__name_prefix}-ecs-task-client-verification-sns-publish"
   role   = aws_iam_role.security__ecs_task["client"].id
@@ -5082,7 +5082,7 @@ resource "aws_iam_role_policy" "security__ecs_task_client_publish_verification_s
 # Source: modules/security/main.tf
 
 data "aws_iam_policy_document" "security__ecs_client_write_verification_s3" {
-  count = var.security__enable_verification_pipeline && var.security__verification_bucket_arn != "" && !local.use_lab_role ? 1 : 0
+  count = var.security__enable_verification_pipeline && ((var.s3__enable_verification_bucket ? aws_s3_bucket.s3__verification[0].arn : "")) != "" && !local.use_lab_role ? 1 : 0
 
   statement {
     sid    = "WriteVerificationDocuments"
@@ -5090,14 +5090,14 @@ data "aws_iam_policy_document" "security__ecs_client_write_verification_s3" {
     actions = [
       "s3:PutObject",
     ]
-    resources = ["${var.security__verification_bucket_arn}/*"]
+    resources = ["${((var.s3__enable_verification_bucket ? aws_s3_bucket.s3__verification[0].arn : ""))}/*"]
   }
 }
 
 # Source: modules/security/main.tf
 
 resource "aws_iam_role_policy" "security__ecs_task_client_write_verification_s3" {
-  count = var.security__enable_verification_pipeline && var.security__verification_bucket_arn != "" && !local.use_lab_role ? 1 : 0
+  count = var.security__enable_verification_pipeline && ((var.s3__enable_verification_bucket ? aws_s3_bucket.s3__verification[0].arn : "")) != "" && !local.use_lab_role ? 1 : 0
 
   name   = "${var.security__name_prefix}-ecs-task-client-verification-s3-write"
   role   = aws_iam_role.security__ecs_task["client"].id
@@ -5116,7 +5116,7 @@ data "aws_iam_policy_document" "security__ecs_sqs_send" {
       "sqs:SendMessage",
       "sqs:GetQueueUrl",
     ]
-    resources = compact([var.security__audit_sqs_arn, var.security__aml_sqs_arn])
+    resources = compact([((var.sqs__enable_audit_pipeline ? aws_sqs_queue.sqs__audit[0].arn : "")), ((var.sqs__enable_aml_pipeline ? aws_sqs_queue.sqs__aml[0].arn : ""))])
   }
 }
 
@@ -5133,7 +5133,7 @@ resource "aws_iam_role_policy" "security__ecs_task_sqs" {
 # Source: modules/security/main.tf
 
 data "aws_iam_policy_document" "security__ecs_transaction_s3_read" {
-  count = var.security__enable_sftp_transaction_collector && var.security__transaction_sftp_bucket_arn != "" && !local.use_lab_role ? 1 : 0
+  count = var.security__enable_sftp_transaction_collector && ((var.s3__enable_transaction_sftp_bucket ? aws_s3_bucket.s3__transaction_sftp[0].arn : "")) != "" && !local.use_lab_role ? 1 : 0
 
   statement {
     sid    = "ReadTransactionIngestionS3Source"
@@ -5143,8 +5143,8 @@ data "aws_iam_policy_document" "security__ecs_transaction_s3_read" {
       "s3:ListBucket",
     ]
     resources = [
-      var.security__transaction_sftp_bucket_arn,
-      "${var.security__transaction_sftp_bucket_arn}/*",
+      ((var.s3__enable_transaction_sftp_bucket ? aws_s3_bucket.s3__transaction_sftp[0].arn : "")),
+      "${((var.s3__enable_transaction_sftp_bucket ? aws_s3_bucket.s3__transaction_sftp[0].arn : ""))}/*",
     ]
   }
 }
@@ -5152,7 +5152,7 @@ data "aws_iam_policy_document" "security__ecs_transaction_s3_read" {
 # Source: modules/security/main.tf
 
 resource "aws_iam_role_policy" "security__ecs_task_transaction_s3_read" {
-  count = var.security__enable_sftp_transaction_collector && var.security__transaction_sftp_bucket_arn != "" && !local.use_lab_role ? 1 : 0
+  count = var.security__enable_sftp_transaction_collector && ((var.s3__enable_transaction_sftp_bucket ? aws_s3_bucket.s3__transaction_sftp[0].arn : "")) != "" && !local.use_lab_role ? 1 : 0
 
   name   = "${var.security__name_prefix}-ecs-task-transaction-s3-read"
   role   = aws_iam_role.security__ecs_task["transaction"].id
@@ -5372,13 +5372,13 @@ resource "aws_ses_domain_mail_from" "ses__this" {
 resource "aws_ses_identity_notification_topic" "ses__events" {
   for_each = (
     var.ses__enable_ses &&
-    var.ses__notification_topic_arn != "" &&
+    ((var.sns__enable_verification_pipeline ? aws_sns_topic.sns__verification[0].arn : "")) != "" &&
     local.notification_identity != ""
   ) ? toset(["Bounce", "Complaint", "Delivery"]) : toset([])
 
   identity          = local.notification_identity
   notification_type = each.value
-  topic_arn         = var.ses__notification_topic_arn
+  topic_arn         = ((var.sns__enable_verification_pipeline ? aws_sns_topic.sns__verification[0].arn : ""))
 }
 
 # ---- Module: sns ----
